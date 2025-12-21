@@ -1,4 +1,4 @@
-# PyECS Game Engine
+#  Untitled Game Engine
 
 Простой и легковесный ASCII 2D игровой движок на Python с архитектурой Entity Component System (ECS). Идеально подходит для создания консольных игр, прототипирования и изучения игровых движков.
 
