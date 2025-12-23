@@ -1,60 +1,77 @@
-from typing import Callable, Optional, Any
+from typing import Any, Callable, Optional
 from abc import ABC
+from time import time
+from copy import copy
+from enum import IntEnum
 
-class Event(ABC): 
-    def __init__(self, id: int, on_event: Callable, data: Any, created_at: float, priority: int = 0, source: Optional[Any] = None):
-        self.id = id
-        self.on_event = on_event
-        self.data = data
-        self.created_at = created_at
+
+class Phase(IntEnum):
+    """Game loop phases."""
+    INPUT = 0
+    SIMULATION = 1
+    REACTION = 2
+    RENDER = 3
+
+
+class Event(ABC):
+    """Base class for all events."""
+
+    def __init__(
+        self,
+        priority: int = 0,
+        timestamp: Optional[float] = None,
+        source: Optional[Any] = None
+    ):
         self.priority = priority
+        self.timestamp = time() if timestamp is None else timestamp
         self.source = source
 
+
 class EventBus:
+    """Central event routing system."""
+
     def __init__(self):
-        self.subscribers = {
-            0:[],
-            1:[],
-            2:[],
-            3:[]
-        }
-        self.events_queue = {
-            0:[],
-            1:[],
-            2:[],
-            3:[]
-        }
-        
-    def subscribe(self, phase: int, event: Event):
-        """
-        Phases:
-            0: input 
-            1: simulation 
-            2: reaction 
-            3: render
-        """
-        if self.subscribers.get(event) is None: 
-            self.subscribers[event] = []
+        self.subscribers = {phase: [] for phase in Phase}
+        self.event_queue = {phase: [] for phase in Phase}
 
-        for i, sub in enumerate(self.subscribers[phase]):
-            if event.priority >= sub.priority: 
-                self.subscribers[phase][event].insert(i, event)
-                return
-            
-        if len(self.subscribers[phase][event]) == 0: self.subscribers[phase].append(event)
+    def subscribe(
+        self,
+        id: int,
+        phase: Phase,
+        event_type: type[Event],
+        handler: Callable[[Event], None],
+        priority: int = 0
+    ):
+        """Subscribe handler to event type in a phase."""
+        self.subscribers[phase].append({
+            'event_type': event_type,
+            'id': id,
+            'priority': priority,
+            'handler': handler
+        })
 
-    def unsubscribe(self, id: int, phase: int):
-        for event in self.subscribers[phase]:
-            if event.id == id: 
-                self.subscribers[phase].remove(event)
-                return
-            
-    def emit(self, phase: int, event: Event):
-        for sub in self.subscribers[phase]:
-            if isinstance(sub, event): 
-                for i, e in enumerate(self.events_queue[phase]):
-                    if event.priority >= e.priority:
-                        self.events_queue[phase].insert(i, e.on_event)
-                        return
-                
-                if len(self.events_queue[phase]) == 0: self.events_queue[phase].append(e.on_event)
+    def unsubscribe(self, phase: Phase, id: int):
+        """Remove all subscriptions for given id in phase."""
+        self.subscribers[phase] = [
+            sub for sub in self.subscribers[phase]
+            if sub['id'] != id
+        ]
+
+    def emit(self, phase: Phase, event: Event):
+        """Queue event for processing in phase."""
+        self.event_queue[phase].append(event)
+
+    def dispatch(self, phase: Phase):
+        """Dispatch all queued events for phase."""
+        events = copy(self.event_queue[phase])
+        self.event_queue[phase] = []
+
+        subs = copy(self.subscribers[phase])
+
+        events.sort(key=lambda e: (-e.priority, e.timestamp))
+        subs.sort(key=lambda s: -s['priority'])
+
+        for e in events:
+            for sub in subs:
+                if isinstance(e, sub['event_type']):
+                    sub['handler'](e)
