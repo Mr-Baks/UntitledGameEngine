@@ -10,7 +10,7 @@ class Transform:
     Attributes:
         pos: Position vector (x, y) in world coordinates as a numpy array.
     """
-    pos: np.ndarray
+    pos: np.ndarray[np.float32]
 
 @dataclass
 class Physics:
@@ -23,8 +23,8 @@ class Physics:
         velocity_limit: Maximum allowable magnitude of velocity.
     """
     mass: np.float32
-    velocity: np.ndarray
-    acceleration: np.ndarray
+    velocity: np.ndarray[np.float32]
+    acceleration: np.ndarray[np.float32]
     velocity_limit: np.float32
 
 @dataclass
@@ -56,23 +56,23 @@ class Render:
     draw_priority: int = 0
     texture_id: str = None
 
-@dataclass
-class Script:
-    """Attaches customizable behavior callbacks to an entity.
+# @dataclass
+# class Script:
+#     """Attaches customizable behavior callbacks to an entity.
     
-    Attributes:
-        on_init: Callback executed when the entity is initialized.
-        on_tick: Callback executed each game tick.
-        on_frame: Callback executed each game frame.
-        on_remove: Callback executed when the entity is removed.
-        on_collision: Callback executed when the entity collides with another.
+#     Attributes:
+#         on_init: Callback executed when the entity is initialized.
+#         on_tick: Callback executed each game tick.
+#         on_frame: Callback executed each game frame.
+#         on_remove: Callback executed when the entity is removed.
+#         on_collision: Callback executed when the entity collides with another.
     
-    Note:
-        All callbacks should be callable objects (functions, lambdas, etc.)
-    """
-    on_init: Optional[Callable] = lambda game: None
-    on_tick: Optional[Callable] = lambda game: None
-    on_frame: Optional[Callable] = lambda game: None
-    on_remove: Optional[Callable] = lambda game: None
-    on_collision: Optional[Callable] = lambda entity, other: None
+#     Note:
+#         All callbacks should be callable objects (functions, lambdas, etc.)
+#     """
+#     on_init: Optional[Callable] = lambda game: None
+#     on_tick: Optional[Callable] = lambda game: None
+#     on_frame: Optional[Callable] = lambda game: None
+#     on_remove: Optional[Callable] = lambda game: None
+#     on_collision: Optional[Callable] = lambda entity, other: None
     

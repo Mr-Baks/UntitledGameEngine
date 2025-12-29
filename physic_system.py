@@ -1,5 +1,6 @@
 from components import *
 from entity import *
+from event_system import *
 import numpy as np
 
 
@@ -47,16 +48,82 @@ class CollisionGrid:
                         if e != entity and not e in nearby_entities: nearby_entities.add(e)
         return list(nearby_entities)
 
+class DetectCollisionEvent(Event):
+    def __init__(self, entities: list[Entity], priority=0, timestamp=None, source=None):
+        super().__init__(priority, timestamp, source)
+        self.entities = entities
+
+class ProcessCollisionEvent(Event):
+    def __init__(self, collided_pairs: set[tuple[Entity, Entity]], priority=0, timestamp=None, source=None):
+        super().__init__(priority, timestamp, source)
+        self.collided_pairs = collided_pairs
+
+class CollisionEvent(Event):
+    def __init__(self, e1: Entity, e2: Entity, priority=0, timestamp=None, source=None):
+        super().__init__(priority, timestamp, source)
+        self.e1 = e1
+        self.e2 = e2
+
 class CollisionSystem:
-    def __init__(self, cell_size: tuple[float] = (2, 2), elasticity: float = 0.8):
+    def __init__(self, event_bus: EventBus, cell_size: tuple[float]=(2, 2), elasticity: float=0.8):
         self.collision_grid = CollisionGrid(cell_size)
-        self.elasticity = elasticity         
+        self.elasticity = elasticity
+        self.event_bus = event_bus
+
+        event_bus.subscribe(id=1, phase=Phase.SIMULATION, event_type=DetectCollisionEvent, handler=self._handle_detect_col_event)
+        event_bus.subscribe(id=2, phase=Phase.REACTION, event_type=ProcessCollisionEvent, handler=self._handle_process_col_event, priority=1)
+
+    def _handle_detect_col_event(self, event: DetectCollisionEvent):
+        entities = event.entities
+        self.collision_grid.set_cells_table(entities)
+
+        collided_pairs = set()
+
+        for e1 in entities:
+            if e1.collider is None or e1.transform is None or e1.physics is None or not e1.collider.has_collision:
+                continue
+
+            for e2 in self._check_entity_collision(e1):
+                pair = tuple(sorted((e1, e2), key=id))
+                collided_pairs.add(pair)
+
+        if collided_pairs:
+            self.event_bus.emit(Phase.REACTION, ProcessCollisionEvent(collided_pairs))
+
+    def _handle_process_col_event(self, event: ProcessCollisionEvent):
+        for e1, e2 in event.collided_pairs:
+            self.resolve_collision(e1, e2)
+            self.event_bus.emit(Phase.REACTION, CollisionEvent(e1, e2))
+
+    def _check_entity_collision(self, entity: Entity) -> list[Entity]:
+        if entity not in self.collision_grid.entities_table:
+            return []
+
+        collided = []
+
+        for other in self.collision_grid.get_nearby(entity):
+            if other.collider is None or other.transform is None or other.physics is None or not other.collider.has_collision:
+                continue
+            if self._aabb_intersect(entity, other):
+                collided.append(other)
+
+        return collided
+
+    def _aabb_intersect(self, a: Entity, b: Entity) -> bool:
+        ax1, ay1 = a.transform.pos
+        ax2 = ax1 + a.collider.hitbox_x
+        ay2 = ay1 + a.collider.hitbox_y
+
+        bx1, by1 = b.transform.pos
+        bx2 = bx1 + b.collider.hitbox_x
+        by2 = by1 + b.collider.hitbox_y
+
+        return ax1 <= bx2 and ax2 >= bx1 and ay1 <= by2 and ay2 >= by1
 
     def resolve_collision(self, entity1: Entity, entity2: Entity):
-        """Resolve collision between 2 entities"""
-        overlap_x = min(entity1.collider.hitbox_x + entity1.transform.pos[0], entity2.collider.hitbox_x + entity2.transform.pos[0]) - max(entity1.transform.pos[0], entity2.transform.pos[0])
-        overlap_y = min(entity1.collider.hitbox_y + entity1.transform.pos[1], entity2.collider.hitbox_y + entity2.transform.pos[1]) - max(entity1.transform.pos[1], entity2.transform.pos[1])
-        
+        overlap_x = min(entity1.transform.pos[0] + entity1.collider.hitbox_x, entity2.transform.pos[0] + entity2.collider.hitbox_x) - max(entity1.transform.pos[0], entity2.transform.pos[0])
+        overlap_y = min(entity1.transform.pos[1] + entity1.collider.hitbox_y, entity2.transform.pos[1] + entity2.collider.hitbox_y) - max(entity1.transform.pos[1], entity2.transform.pos[1])
+
         if overlap_x < overlap_y:
             normal = np.array([1.0, 0.0]) if entity1.transform.pos[0] < entity2.transform.pos[0] else np.array([-1.0, 0.0])
             penetration = overlap_x
@@ -64,66 +131,37 @@ class CollisionSystem:
             normal = np.array([0.0, 1.0]) if entity1.transform.pos[1] < entity2.transform.pos[1] else np.array([0.0, -1.0])
             penetration = overlap_y
 
-        correction = normal * penetration
+        correction = normal * penetration * 0.5
         entity1.transform.pos -= correction
         entity2.transform.pos += correction
 
         relative_velocity = entity1.physics.velocity - entity2.physics.velocity
         velocity_norm = np.dot(relative_velocity, normal)
-        
+
         if velocity_norm < 0:
             return
-            
+
         impulse_scalar = -(1 + self.elasticity) * velocity_norm
         impulse_scalar /= (1 / entity1.physics.mass + 1 / entity2.physics.mass)
-        
+
         impulse = impulse_scalar * normal
         entity1.physics.velocity += impulse / entity1.physics.mass
         entity2.physics.velocity -= impulse / entity2.physics.mass
 
-        if entity1.script is not None: entity1.script.on_collision(entity1, entity2)
-        if entity2.script is not None: entity2.script.on_collision(entity2, entity1)
-
-    def check_collision(self, entity: Entity) -> list[Entity]:
-        """Check all collisions at entity"""
-        if entity.collider is None or not entity.collider.has_collision: return []
-
-        collided = []
-        for e in self.collision_grid.get_nearby(entity):
-            if not e.collider.has_collision: continue
-            
-            obj_x_min = entity.transform.pos[0]
-            obj_x_max = entity.collider.hitbox_x + entity.transform.pos[0]
-            obj_y_min = entity.transform.pos[1]
-            obj_y_max = entity.collider.hitbox_y + entity.transform.pos[1]
-
-            oth_obj_x_min = e.transform.pos[0]
-            oth_obj_x_max = e.collider.hitbox_x + e.transform.pos[0]
-            oth_obj_y_min = e.transform.pos[1]
-            oth_obj_y_max = e.collider.hitbox_y + e.transform.pos[1]
-        
-            if (obj_x_max >= oth_obj_x_min and obj_x_min <= oth_obj_x_max and obj_y_max >= oth_obj_y_min and obj_y_min <= oth_obj_y_max):
-                collided.append(e)
-        return collided
-    
-    def process_collision(self, entities: list[Entity]):
-        """Process all collisions in entities's list"""
-        processed_pairs = set()
-    
-        for e1 in entities:
-            if e1.collider is None: continue
-            for e2 in self.check_collision(e1):
-                if e2.collider is None: continue
-                pair_id = tuple(sorted([id(e1), id(e2)]))
-            
-                if pair_id not in processed_pairs:
-                    self.resolve_collision(e1, e2)
-                    processed_pairs.add(pair_id)
-                    if e1.script is not None: e1.script.on_collision(e1, e2)
-                    if e2.script is not None: e1.script.on_collision(e2, e1)
+class PhysicsUpdateEvent(Event):
+    def __init__(self, entities: list[Entity], delta_time: float, priority = 0, timestamp = None, source = None):
+        super().__init__(priority, timestamp, source)
+        self.entities = entities
+        self.delta_time = delta_time
 
 class PhysicsSystem:
-    def update(self, entities: list[Entity], delta_time: float, collision_system: CollisionSystem):
+    def __init__(self, event_bus: EventBus):
+        event_bus.subscribe(0, Phase.SIMULATION, PhysicsUpdateEvent, self._handle_upd_event)
+
+    def _handle_upd_event(self, event: PhysicsUpdateEvent):
+        self.update(event.entities, event.delta_time)
+
+    def update(self, entities: list[Entity], delta_time: float):
         """Update states of entities per delta time"""
         for e in entities:
             if e.transform is None or e.physics is None: continue
@@ -136,4 +174,4 @@ class PhysicsSystem:
                 e.physics.velocity = (e.physics.velocity / vel_magnitude) * e.physics.velocity_limit
 
             e.transform.pos = e.transform.pos + e.physics.velocity * t * np.array((1, 0.5), dtype=np.float32)
-        collision_system.collision_grid.set_cells_table(entities)
+

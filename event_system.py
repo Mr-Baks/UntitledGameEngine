@@ -6,7 +6,7 @@ from enum import IntEnum
 
 
 class Phase(IntEnum):
-    """Game loop phases."""
+    """Game loop phases"""
     INPUT = 0
     SIMULATION = 1
     REACTION = 2
@@ -14,35 +14,22 @@ class Phase(IntEnum):
 
 
 class Event(ABC):
-    """Base class for all events."""
-
-    def __init__(
-        self,
-        priority: int = 0,
-        timestamp: Optional[float] = None,
-        source: Optional[Any] = None
-    ):
+    """Base class for all events"""
+    def __init__(self, priority: int = 0, timestamp: Optional[float] = None, source: Optional[Any] = None):
         self.priority = priority
         self.timestamp = time() if timestamp is None else timestamp
         self.source = source
 
 
 class EventBus:
-    """Central event routing system."""
+    """Central event routing system"""
 
     def __init__(self):
         self.subscribers = {phase: [] for phase in Phase}
         self.event_queue = {phase: [] for phase in Phase}
 
-    def subscribe(
-        self,
-        id: int,
-        phase: Phase,
-        event_type: type[Event],
-        handler: Callable[[Event], None],
-        priority: int = 0
-    ):
-        """Subscribe handler to event type in a phase."""
+    def subscribe(self, id: int, phase: Phase, event_type: type[Event], handler: Callable[[Event], None], priority: int = 0):
+        """Subscribe handler to event type in a phase"""
         self.subscribers[phase].append({
             'event_type': event_type,
             'id': id,
@@ -51,18 +38,18 @@ class EventBus:
         })
 
     def unsubscribe(self, phase: Phase, id: int):
-        """Remove all subscriptions for given id in phase."""
+        """Remove all subscriptions for given id in phase"""
         self.subscribers[phase] = [
             sub for sub in self.subscribers[phase]
             if sub['id'] != id
         ]
 
     def emit(self, phase: Phase, event: Event):
-        """Queue event for processing in phase."""
+        """Queue event for processing in phase"""
         self.event_queue[phase].append(event)
 
     def dispatch(self, phase: Phase):
-        """Dispatch all queued events for phase."""
+        """Dispatch all queued events for phase"""
         events = copy(self.event_queue[phase])
         self.event_queue[phase] = []
 

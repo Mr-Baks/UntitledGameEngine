@@ -1,305 +1,436 @@
-# Этот пример делала нейронка
+# НАПИСАНО НЕЙРОНКОЙ
 import numpy as np
-from game import Game, Entity
-from components import Transform, Physics, Collider, Render, Script
 import random
+from typing import List, Tuple
+from entity import Entity
+from components import Transform, Physics, Collider, Render
+from event_system import EventBus, Phase
+from game import Game, Input
+import time
+from game import *
 
-
-class SpaceShooter:
-    def __init__(self):
-        # Создаем игру с разрешением 80x40, 30 FPS, 60 тиков в секунду
-        self.game = Game(
-            resolution=(80, 40),
-            fps=30,
-            tickspeed=60,
-            elasticity=0.5
+class PlayerController:
+    """Система управления игроком через события"""
+    def __init__(self, game: Game, player: Entity):
+        self.game = game
+        self.player = player
+        self.jump_force = 200.0
+        self.move_force = 150.0
+        
+        # Подписываемся на события
+        game.event_bus.subscribe(
+            id=100,
+            phase=Phase.REACTION,
+            event_type=EntityTickEvent,
+            handler=self._on_player_tick
         )
         
-        # Настраиваем колбэки
-        self.game.on_tick = self.on_tick
-        self.game.on_frame = self.on_frame
-        
-        # Счетчики
-        self.score = 0
-        self.enemies_count = 0
-        self.max_enemies = 15
-        self.game_time = 0
-        
-        # Инициализируем игру
-        self.init_game()
+        # Настройка управления
+        self._setup_controls()
     
-    def create_player(self):
-        """Создает игрока (космический корабль)"""
-        player = Entity(id=0)
-        player.add_component(Transform(pos=np.array([10.0, 20.0], dtype=np.float32)))
-        player.add_component(Physics(
-            mass=1.0,
-            velocity=np.array([0.0, 0.0], dtype=np.float32),
-            acceleration=np.array([0.0, 0.0], dtype=np.float32),
-            velocity_limit=5.0
-        ))
-        player.add_component(Collider(hitbox_x=3, hitbox_y=2, has_collision=True))
-        player.add_component(Render(
-            is_visible=True,
-            draw_priority=2,
-            texture_id="player"
-        ))
-        player.add_component(Script(
-            on_tick=lambda game: self.update_player(player),
-            on_collision=lambda entity, other: self.on_player_collision(entity, other)
-        ))
+    def _setup_controls(self):
+        """Настройка клавиш управления"""
+        input_system = self.game.input
         
-        return player
-    
-    def create_bullet(self, pos, velocity):
-        """Создает пулю"""
-        bullet_id = random.randint(1000, 9999)
-        bullet = Entity(id=bullet_id)
-        bullet.add_component(Transform(pos=pos.copy()))
-        bullet.add_component(Physics(
-            mass=0.1,
-            velocity=velocity,
-            acceleration=np.array([0.0, 0.0], dtype=np.float32),
-            velocity_limit=20.0
-        ))
-        bullet.add_component(Collider(hitbox_x=1, hitbox_y=1, has_collision=True))
-        bullet.add_component(Render(
-            is_visible=True,
-            draw_priority=1,
-            texture_id="bullet"
-        ))
-        bullet.add_component(Script(
-            on_tick=lambda game: self.update_bullet(bullet),
-            on_collision=lambda entity, other: self.on_bullet_collision(entity, other)
-        ))
+        # Прыжок (пробел)
+        input_system.bind_key(
+            key=' ',
+            on_press=self._jump
+        )
         
-        self.game.add_entity(bullet)
-        return bullet
-    
-    def create_enemy(self, pos):
-        """Создает вражеский корабль"""
-        enemy_id = random.randint(100, 999)
-        enemy = Entity(id=enemy_id)
-        enemy.add_component(Transform(pos=pos.copy()))
-        enemy.add_component(Physics(
-            mass=1.5,
-            velocity=np.array([-1.0, random.uniform(-0.5, 0.5)], dtype=np.float32),
-            acceleration=np.array([0.0, 0.0], dtype=np.float32),
-            velocity_limit=3.0
-        ))
-        enemy.add_component(Collider(hitbox_x=4, hitbox_y=2, has_collision=True))
-        enemy.add_component(Render(
-            is_visible=True,
-            draw_priority=1,
-            texture_id="enemy"
-        ))
-        enemy.add_component(Script(
-            on_tick=lambda game: self.update_enemy(enemy),
-            on_collision=lambda entity, other: self.on_enemy_collision(entity, other)
-        ))
+        # Движение влево (A/стрелка влево)
+        input_system.bind_key(
+            key='a',
+            on_press=lambda: self._start_move(-1),
+            on_release=self._stop_move
+        )
+        input_system.bind_key(
+            key='left',
+            on_press=lambda: self._start_move(-1),
+            on_release=self._stop_move
+        )
         
-        self.game.add_entity(enemy)
-        self.enemies_count += 1
-        return enemy
-    
-    def create_star(self):
-        """Создает звезду (фон)"""
-        star = Entity(id=random.randint(2000, 2999))
-        star.add_component(Transform(
-            pos=np.array([
-                random.uniform(0, 79),
-                random.uniform(0, 39)
-            ], dtype=np.float32)
-        ))
-        star.add_component(Render(
-            is_visible=True,
-            draw_priority=0,
-            texture_id="star"
-        ))
-        star.add_component(Script(
-            on_tick=lambda game: self.update_star(star)
-        ))
+        # Движение вправо (D/стрелка вправо)
+        input_system.bind_key(
+            key='d',
+            on_press=lambda: self._start_move(1),
+            on_release=self._stop_move
+        )
+        input_system.bind_key(
+            key='right',
+            on_press=lambda: self._start_move(1),
+            on_release=self._stop_move
+        )
         
-        self.game.add_entity(star)
-        return star
+        # Пауза (P)
+        input_system.bind_key(
+            key='p',
+            on_press=self._toggle_pause
+        )
     
-    def update_player(self, player):
-        """Обновляет состояние игрока"""
-        physics = player.physics
-        if physics is None:
+    def _jump(self):
+        """Обработка прыжка"""
+        if self.player.physics:
+            # Проверяем, стоит ли игрок на земле (упрощенно)
+            if abs(self.player.physics.velocity[1]) < 1.0:
+                self.player.physics.velocity[1] = self.jump_force
+    
+    def _start_move(self, direction: int):
+        """Начало движения"""
+        if self.player.physics:
+            self.player.physics.acceleration[0] = direction * self.move_force
+    
+    def _stop_move(self):
+        """Остановка движения"""
+        if self.player.physics:
+            self.player.physics.acceleration[0] = 0.0
+    
+    def _toggle_pause(self):
+        """Переключение паузы"""
+        print("\n=== ПАУЗА ===")
+        print("Нажмите P для продолжения")
+    
+    def _on_player_tick(self, event: EntityTickEvent):
+        """Обработка каждого тика для игрока"""
+        if event.entity != self.player:
             return
         
-        # Сбрасываем ускорение
-        physics.acceleration = np.array([0.0, 0.0], dtype=np.float32)
+        # Ограничиваем максимальную скорость падения
+        if self.player.physics.velocity[1] < -300:
+            self.player.physics.velocity[1] = -300
         
-        # Управление с клавиатуры
-        move_speed = 8.0
-        if self.game.input.is_pressed('w'):
-            physics.acceleration[1] = move_speed
-        if self.game.input.is_pressed('s'):
-            physics.acceleration[1] = -move_speed
-        if self.game.input.is_pressed('a'):
-            physics.acceleration[0] = -move_speed
-        if self.game.input.is_pressed('d'):
-            physics.acceleration[0] = move_speed
+        # Гравитация
+        self.player.physics.acceleration[1] = -500.0
+
+class CoinSystem:
+    """Система монеток и подсчета очков"""
+    def __init__(self, game: Game):
+        self.game = game
+        self.coins_collected = 0
+        self.total_coins = 0
         
-        # Стрельба
-        if self.game.input.is_pressed(' '):
-            self.shoot_bullet(player)
+        # Подписываемся на события столкновений
+        game.event_bus.subscribe(
+            id=101,
+            phase=Phase.REACTION,
+            event_type=CollisionEvent,
+            handler=self._on_collision
+        )
         
-        # Удержание в границах экрана
-        transform = player.transform
-        if transform.pos[1] < 1:
-            transform.pos[1] = 1
-            physics.velocity[1] = 0
-        elif transform.pos[1] > 37:
-            transform.pos[1] = 37
-            physics.velocity[1] = 0
-        
-        if transform.pos[0] < 1:
-            transform.pos[0] = 1
-            physics.velocity[0] = 0
+        # Подписываемся на каждый тик для обновления UI
+        game.event_bus.subscribe(
+            id=102,
+            phase=Phase.REACTION,
+            event_type=TickEvent,
+            handler=self._on_tick
+        )
     
-    def shoot_bullet(self, player):
-        """Стрельба пулями"""
-        if self.game.tick % 5 != 0:  # Ограничение скорости стрельбы
+    def _on_collision(self, event: CollisionEvent):
+        """Обработка столкновений"""
+        player = None
+        coin = None
+        
+        # Определяем, кто есть кто
+        if event.e1.render and event.e1.render.texture_id == 'player':
+            player = event.e1
+            other = event.e2
+        elif event.e2.render and event.e2.render.texture_id == 'player':
+            player = event.e2
+            other = event.e1
+        else:
             return
         
-        player_pos = player.transform.pos
-        bullet_velocity = np.array([15.0, 0.0], dtype=np.float32)
-        bullet_pos = player_pos + np.array([3.0, 1.0], dtype=np.float32)
-        
-        self.create_bullet(bullet_pos, bullet_velocity)
-    
-    def update_bullet(self, bullet):
-        """Обновление пули"""
-        transform = bullet.transform
-        physics = bullet.physics
-        
-        # Удаляем пулю, если она вышла за экран
-        if transform.pos[0] > 82 or transform.pos[0] < -5:
-            self.game.remove_entity(bullet.id)
-    
-    def update_enemy(self, enemy):
-        """Обновление врага"""
-        transform = enemy.transform
-        
-        # Удаляем врага, если он вышел за левую границу
-        if transform.pos[0] < -5:
-            self.game.remove_entity(enemy.id)
-            self.enemies_count -= 1
-        
-        # Случайное изменение направления по Y
-        if random.random() < 0.05:
-            enemy.physics.velocity[1] = random.uniform(-1.0, 1.0)
-    
-    def update_star(self, star):
-        """Обновление звезды (движение влево)"""
-        transform = star.transform
-        transform.pos[0] -= 0.2
-        
-        # Если звезда ушла за левую границу, перемещаем ее вправо
-        if transform.pos[0] < -1:
-            transform.pos[0] = 80
-            transform.pos[1] = random.uniform(0, 39)
-    
-    def on_player_collision(self, player, other):
-        """Обработка столкновения игрока"""
-        if "enemy" in str(other.render.texture_id):
-            print("GAME OVER! Final Score:", self.score)
-            self.game.is_running = False
-    
-    def on_bullet_collision(self, bullet, other):
-        """Обработка столкновения пули"""
-        if "enemy" in str(other.render.texture_id):
-            self.score += 100
-            self.game.remove_entity(bullet.id)
+        # Если столкнулись с монеткой
+        if other.render and other.render.texture_id == 'coin':
+            self.coins_collected += 1
+            print(f"\nМонетка собрана! Всего: {self.coins_collected}/{self.total_coins}")
+            
+            # Удаляем монетку
             self.game.remove_entity(other.id)
-            self.enemies_count -= 1
+            
+            # Проверка победы
+            if self.coins_collected >= self.total_coins:
+                print("\n" + "="*40)
+                print("ПОБЕДА! Все монетки собраны!")
+                print("="*40)
+                time.sleep(3)
+                self.game.is_running = False
     
-    def on_enemy_collision(self, enemy, other):
-        """Обработка столкновения врага"""
+    def _on_tick(self, event: TickEvent):
+        """Обновление UI каждый тик"""
+        # В реальной игре здесь был бы вывод на экран
         pass
-    
-    def spawn_enemies(self):
-        """Спавн новых врагов"""
-        if self.enemies_count < self.max_enemies and random.random() < 0.1:
-            pos = np.array([
-                78,  # Правая граница
-                random.uniform(5, 35)
-            ], dtype=np.float32)
-            self.create_enemy(pos)
-    
-    def spawn_stars(self):
-        """Создание фоновых звезд"""
-        if len([e for e in self.game.entities_list if "star" in str(e.render.texture_id)]) < 30:
-            self.create_star()
-    
-    def on_tick(self, game):
-        """Вызывается каждый тик игры"""
-        self.game_time += 1
-        self.spawn_enemies()
-        self.spawn_stars()
+
+class EnemyAI:
+    """ИИ для врагов"""
+    def __init__(self, game: Game):
+        self.game = game
         
-        # Постепенное увеличение сложности
-        if self.game_time % 300 == 0:
-            self.max_enemies = min(25, self.max_enemies + 2)
+        game.event_bus.subscribe(
+            id=103,
+            phase=Phase.REACTION,
+            event_type=EntityTickEvent,
+            handler=self._on_enemy_tick
+        )
     
-    def on_frame(self, game):
-        """Вызывается каждый кадр"""
-        # Можно добавить визуальные эффекты здесь
+    def _on_enemy_tick(self, event: EntityTickEvent):
+        """Обработка тика для врага"""
+        entity = event.entity
+        
+        # Проверяем, что это враг
+        if not (entity.render and entity.render.texture_id == 'enemy'):
+            return
+        
+        # Простой патрулирующий ИИ
+        if entity.physics:
+            # Меняем направление каждые 3 секунды
+            current_time = time.time()
+            if hasattr(entity, 'last_direction_change'):
+                if current_time - entity.last_direction_change > 3:
+                    entity.move_direction *= -1
+                    entity.last_direction_change = current_time
+            else:
+                entity.move_direction = 1 if random.random() > 0.5 else -1
+                entity.last_direction_change = current_time
+            
+            # Применяем движение
+            entity.physics.velocity[0] = entity.move_direction * 50
+
+def create_platform(game: Game, x: float, y: float, width: int, height: int) -> Entity:
+    """Создание платформы"""
+    platform = Entity(len(game.entities_list))
+    platform.add_component(Transform(np.array([x, y], dtype=np.float32)))
+    platform.add_component(Physics(
+        mass=1000.0,  # Очень тяжелая
+        velocity=np.array([0.0, 0.0], dtype=np.float32),
+        acceleration=np.array([0.0, 0.0], dtype=np.float32),
+        velocity_limit=0.0
+    ))
+    platform.add_component(Collider(
+        hitbox_x=width,
+        hitbox_y=height,
+        has_collision=True
+    ))
+    platform.add_component(Render(
+        is_visible=True,
+        draw_priority=1,
+        texture_id='platform'
+    ))
+    return platform
+
+def create_coin(game: Game, x: float, y: float) -> Entity:
+    """Создание монетки"""
+    coin = Entity(len(game.entities_list))
+    coin.add_component(Transform(np.array([x, y], dtype=np.float32)))
+    coin.add_component(Physics(
+        mass=1.0,
+        velocity=np.array([0.0, 0.0], dtype=np.float32),
+        acceleration=np.array([0.0, 0.0], dtype=np.float32),
+        velocity_limit=0.0
+    ))
+    coin.add_component(Collider(
+        hitbox_x=2,
+        hitbox_y=2,
+        has_collision=True
+    ))
+    coin.add_component(Render(
+        is_visible=True,
+        draw_priority=3,
+        texture_id='coin'
+    ))
+    return coin
+
+def create_enemy(game: Game, x: float, y: float) -> Entity:
+    """Создание врага"""
+    enemy = Entity(len(game.entities_list))
+    enemy.add_component(Transform(np.array([x, y], dtype=np.float32)))
+    enemy.add_component(Physics(
+        mass=10.0,
+        velocity=np.array([0.0, 0.0], dtype=np.float32),
+        acceleration=np.array([0.0, 0.0], dtype=np.float32),
+        velocity_limit=100.0
+    ))
+    enemy.add_component(Collider(
+        hitbox_x=3,
+        hitbox_y=3,
+        has_collision=True
+    ))
+    enemy.add_component(Render(
+        is_visible=True,
+        draw_priority=2,
+        texture_id='enemy'
+    ))
+    return enemy
+
+def create_player(game: Game, x: float, y: float) -> Entity:
+    """Создание игрока"""
+    player = Entity(len(game.entities_list))
+    player.add_component(Transform(np.array([x, y], dtype=np.float32)))
+    player.add_component(Physics(
+        mass=10.0,
+        velocity=np.array([0.0, 0.0], dtype=np.float32),
+        acceleration=np.array([0.0, -500.0], dtype=np.float32),  # Гравитация
+        velocity_limit=200.0
+    ))
+    player.add_component(Collider(
+        hitbox_x=4,
+        hitbox_y=4,
+        has_collision=True
+    ))
+    player.add_component(Render(
+        is_visible=True,
+        draw_priority=4,  # Игрок рисуется поверх всего
+        texture_id='player'
+    ))
+    return player
+
+def load_textures():
+    """Загрузка текстур для игры"""
+    textures = {
+        "player": [" ██ ", "████", " ██ ", " ██ "],
+        "platform": ["████████", "████████", "████████"],
+        "coin": [" $$ ", "$  $", " $$ "],
+        "enemy": [" /\\ ", "<██>", " \\/ "]
+    }
     
-    def setup_input(self):
-        """Настройка управления"""
-        self.game.input.bind_key('w')
-        self.game.input.bind_key('a')
-        self.game.input.bind_key('s')
-        self.game.input.bind_key('d')
-        self.game.input.bind_key(' ')  # Пробел для стрельбы
-        
-        # Выход из игры
-        self.game.input.bind_key('q', on_press=lambda: self.quit_game())
-        self.game.input.bind_key('esc', on_press=lambda: self.quit_game())
+    # Сохраняем в файл (как ожидает движок)
+    import json
+    with open('textures.json', 'w') as f:
+        json.dump(textures, f, indent=2)
+
+def create_level(game: Game) -> Tuple[Entity, int]:
+    """Создание уровня"""
+    print("Создание уровня...")
     
-    def quit_game(self):
-        """Выход из игры"""
-        print(f"Game ended. Final score: {self.score}")
-        self.game.is_running = False
+    # Создаем платформы
+    platforms = [
+        # Пол
+        (0, 5, 40, 2),
+        # Платформы
+        (5, 10, 8, 2),
+        (20, 12, 8, 2),
+        (10, 16, 6, 2),
+        (28, 18, 6, 2),
+        # Стены
+        (38, 7, 2, 15),
+        (0, 7, 2, 15)
+    ]
     
-    def init_game(self):
-        """Инициализация игры"""
-        # Создаем игрока
-        player = self.create_player()
-        self.game.add_entity(player)
-        self.game.set_player(player)
-        
-        # Настраиваем управление
-        self.setup_input()
-        
-        # Создаем начальных врагов
-        for _ in range(5):
-            pos = np.array([
-                random.uniform(30, 70),
-                random.uniform(5, 35)
-            ], dtype=np.float32)
-            self.create_enemy(pos)
-        
-        # Создаем фоновые звезды
-        for _ in range(20):
-            self.create_star()
-        
-        print("=== SPACE SHOOTER ===")
-        print("Controls: W/A/S/D - Move, SPACE - Shoot, Q/ESC - Quit")
-        print("Destroy enemies to score points!")
-        print("=" * 30)
+    for x, y, w, h in platforms:
+        game.add_entity(create_platform(game, x, y, w, h))
     
-    def run(self):
-        """Запуск игры"""
-        try:
-            self.game.run()
-        except KeyboardInterrupt:
-            print(f"\nGame interrupted. Final score: {self.score}")
+    # Создаем монетки
+    coin_positions = [
+        (8, 12), (25, 14), (12, 18), (30, 20),
+        (15, 8), (22, 8), (30, 10)
+    ]
+    
+    for x, y in coin_positions:
+        game.add_entity(create_coin(game, x, y))
+    
+    # Создаем врагов
+    enemy_positions = [
+        (15, 12), (25, 18)
+    ]
+    
+    for x, y in enemy_positions:
+        game.add_entity(create_enemy(game, x, y))
+    
+    # Создаем игрока
+    player = create_player(game, 5.0, 15.0)
+    game.add_entity(player)
+    
+    return player, len(coin_positions)
+
+def main():
+    """Основная функция игры"""
+    print("="*50)
+    print("    ПЛАТФОРМЕР - СОБЕРИ ВСЕ МОНЕТКИ!")
+    print("="*50)
+    print("\nУправление:")
+    print("  A/← - Влево")
+    print("  D/→ - Вправо")
+    print("  Пробел - Прыжок")
+    print("  P - Пауза")
+    print("\nЦель: собрать все монетки, избегая врагов!")
+    print("="*50)
+    
+    # Загружаем текстуры
+    load_textures()
+    
+    # Создаем игру
+    game = Game(
+        resolution=(80, 30),  # Широкий экран для платформера
+        fps=60,
+        tickspeed=120,
+        elasticity=0.3  # Немного отскока
+    )
+    
+    # Создаем уровень
+    player, total_coins = create_level(game)
+    
+    # Настраиваем игрока
+    game.set_player(player)
+    
+    # Инициализируем системы
+    player_controller = PlayerController(game, player)
+    coin_system = CoinSystem(game)
+    enemy_ai = EnemyAI(game)
+    
+    # Устанавливаем общее количество монеток
+    coin_system.total_coins = total_coins
+    
+    # Подписываемся на столкновение с врагами (проигрыш)
+    def on_enemy_collision(event: CollisionEvent):
+        """Обработка столкновения с врагом"""
+        entities = (event.e1, event.e2)
+        if player in entities:
+            print("\n" + "="*40)
+            print("ВЫ ПРОИГРАЛИ! Столкнулись с врагом!")
+            print("="*40)
+            time.sleep(3)
+            game.is_running = False
+    
+    game.event_bus.subscribe(
+        id=104,
+        phase=Phase.REACTION,
+        event_type=CollisionEvent,
+        handler=on_enemy_collision
+    )
+    
+    # Подписываемся на падение в бездну
+    def on_player_tick(event: EntityTickEvent):
+        """Проверка падения игрока"""
+        if event.entity != player:
+            return
+        
+        # Если игрок упал слишком низко
+        if player.transform.pos[1] < -10:
+            print("\n" + "="*40)
+            print("ВЫ ПРОИГРАЛИ! Упали в бездну!")
+            print("="*40)
+            time.sleep(3)
+            game.is_running = False
+    
+    game.event_bus.subscribe(
+        id=105,
+        phase=Phase.REACTION,
+        event_type=EntityTickEvent,
+        handler=on_player_tick
+    )
+    
+    # Запускаем игру
+    print("\nЗапуск игры... Удачи!")
+    time.sleep(2)
+    
+    try:
+        game.run()
+    except KeyboardInterrupt:
+        print("\n\nИгра прервана пользователем")
+    finally:
+        print("\n" + "="*50)
+        print(f"Игра окончена! Собрано монет: {coin_system.coins_collected}/{total_coins}")
+        print("="*50)
 
 if __name__ == "__main__":
-    game = SpaceShooter()
-    game.run()
+    main()

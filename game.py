@@ -1,7 +1,8 @@
 from entity import Entity
 from components import *
-from render_systems import SceneRenderSystem
-from physic_system import CollisionSystem, PhysicsSystem
+from render_systems import *
+from physic_system import *
+from event_system import *
 from pynput import keyboard as kb
 import time
 from typing import Optional, Callable
@@ -168,29 +169,25 @@ class Game:
         collision_system: Collision detection and resolution system.
         render_system: Rendering system.
         player: The currently controlled player entity.
-        is_running: Flag indicating if the game loop is active.
-    """
+        is_running: Flag indicating if the game loop is active."""
     
-    def __init__(self, resolution: tuple[int], fps: int, tickspeed: int, elasticity: float = 0.8, on_tick: Optional[Callable] = None, on_frame: Optional[Callable] = None):
+    def __init__(self, resolution: tuple[int], fps: int, tickspeed: int, elasticity: float = 0.8):
         self.resolution = resolution
         self.fps = fps
         self.tickspeed = tickspeed
         self.tick = 0
         self.frame_count = 0
-        self.elasticity = elasticity
         self.entities_list = []
-        self.on_frame = on_frame
-        self.on_tick = on_tick
 
+        self.event_bus = EventBus()
         self.input = Input()
-        self.physics_system = PhysicsSystem()
-        self.collision_system = CollisionSystem(cell_size=(3, 3))
-        self.render_system = SceneRenderSystem(resolution)
+        self.physics_system = PhysicsSystem(self.event_bus)
+        self.collision_system = CollisionSystem(self.event_bus, cell_size=(3, 3), elasticity=elasticity)
+        self.render_system = SceneRenderSystem(resolution, self.event_bus)
 
     def add_entity(self, entity: Entity):
         """Adds an entity to the game world"""
         self.entities_list.append(entity)
-        if entity.script is not None: entity.script.on_init(self)
         return self
     
     def get_entity(self, id: int) -> Optional[Entity]:
@@ -209,7 +206,6 @@ class Game:
     def remove_entity(self, id: int):
         """Removes an entity from game world by ID"""
         for e in self.entities_list:
-            if e.script is not None: e.script.on_remove(self)
             if e.id == id: self.entities_list.remove(e)
 
     def run(self):
@@ -230,30 +226,28 @@ class Game:
             last_time = current_time
             tick_accumulator += delta_time
         
-            if self.on_tick is not None: 
-                self.on_tick(self)
-        
             while tick_accumulator >= fixed_delta_time:
                 self.tick += 1
             
-                self.collision_system.collision_grid.set_cells_table(self.entities_list)
-                self.physics_system.update(self.entities_list, fixed_delta_time, self.collision_system)
-                self.collision_system.process_collision(self.entities_list)
+                self.event_bus.emit(Phase.SIMULATION, PhysicsUpdateEvent(self.entities_list, fixed_delta_time, priority=10))
+                self.event_bus.emit(Phase.SIMULATION, DetectCollisionEvent(self.entities_list))
 
-                for e in self.entities_list:
-                    if e.script is not None: e.script.on_tick(self)
+                self.event_bus.emit(Phase.REACTION, TickEvent(self))
+                for e in self.entities_list: 
+                    self.event_bus.emit(Phase.REACTION, EntityTickEvent(e, self))
             
                 tick_accumulator -= fixed_delta_time
-        
             tick_accumulator = min(0.2, tick_accumulator)
 
             self.frame_count += 1
-            if self.on_frame is not None: 
-                self.on_frame(self)
+            self.event_bus.emit(Phase.RENDER, RenderFrameEvent(self.entities_list))
+            self.event_bus.emit(Phase.SIMULATION, FrameEvent(self))
             for e in self.entities_list:
-                if e.script is not None: e.script.on_frame(self)
-            self.render_system.print_screen(self.entities_list)
+                self.event_bus.emit(Phase.SIMULATION, EntityFrameEvent(e, self, priority=0))
         
+            for phase in range(4):
+                self.event_bus.dispatch(phase)
+
             self._limit_fps(current_time)
 
     def _limit_fps(self, current_time):
@@ -267,3 +261,25 @@ class Game:
                 time.sleep(sleep_time * 0.9)
             while time.time() - current_time < target_frame_time:
                 pass
+
+class TickEvent(Event):
+    def __init__(self, game: Game, priority = 0, timestamp = None, source = None):
+        super().__init__(priority, timestamp, source)
+        self.game = game
+
+class FrameEvent(Event):
+    def __init__(self, game: Game, priority = 0, timestamp = None, source = None):
+        super().__init__(priority, timestamp, source)
+        self.game = game
+
+class EntityFrameEvent(Event):
+    def __init__(self, entity: Entity, game: Game, priority = 0, timestamp = None, source = None):
+        super().__init__(priority, timestamp, source)
+        self.entity = entity
+        self.game = game
+
+class EntityTickEvent(Event):
+    def __init__(self, entity: Entity, game: Game, priority = 0, timestamp = None, source = None):
+        super().__init__(priority, timestamp, source)
+        self.entity = entity
+        self.game = game

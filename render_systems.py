@@ -3,25 +3,36 @@ from entity import Entity
 from typing import Optional
 import json
 from copy import copy
+from event_system import Event, EventBus, Phase
 
 
 HIGHLIGHTS = {'default': ('+', '-', '|'),  
               'empty': (' ', ' ', ' '), 
               'focused': ('#', '=', 'I')}
 
+class RenderFrameEvent(Event):
+    def __init__(self, entities_list: list[Entity], background: Optional[list[list[str]]] = None ,frame_style: str = 'default', priority = 0, timestamp = None, source = None):
+        super().__init__(priority, timestamp, source)
+        self.entities_list = entities_list
+        self.background = background
+        self.frame_style = frame_style
+        
 class SceneRenderSystem:
-    """Handles rendering of entities to a console-based screen with camera tracking.
-    This system manages texture loading, entity rendering with draw priorities
-    """
-    
-    def __init__(self, resolution: tuple[int]):
+    """Handles rendering of entities to a console-based screen with camera tracking. This system manages texture loading, entity rendering with draw priorities"""
+    def __init__(self, resolution: tuple[int], event_bus: EventBus):
         self.target_entity = None
         self.resolution = resolution
+        self.event_bus = event_bus
         self.symbol = '#'
         self.last_entities_poses = {}
         self.last_screen = []
         self.entity_list_cache = {}
         self.load_textures()
+
+        self.event_bus.subscribe(0, Phase.RENDER, RenderFrameEvent, self._hadle_render_event)
+
+    def _hadle_render_event(self, event: RenderFrameEvent):
+        self.print_screen(event.entities_list, screen=event.background, frame_style=event.frame_style)
 
     def load_textures(self):
         """Loads texture definitions from textures.json file"""
@@ -32,9 +43,8 @@ class SceneRenderSystem:
         """Sets the target entity that the camera will follow"""
         self.target_entity = target
     
-    def _render_entity(self, screen: list[list[str]], entity: Entity, 
-                       target_x: int, target_y: int):
-        """Renders a single entity onto the screen buffer"""
+    def _render_entity(self, screen: list[list[str]], entity: Entity, target_x: int, target_y: int):
+        """Renders a single entity into the screen buffer"""
         collider = entity.collider
         render = entity.render
         transform = entity.transform
@@ -58,10 +68,10 @@ class SceneRenderSystem:
                 if 0 <= sym_x < self.resolution[0] and 0 <= sym_y < self.resolution[1]:
                     screen[sym_y][sym_x] = texture[y][x]
 
-    def print_screen(self, entities_list: list[Entity], frame_style: str = 'default'):
+    def print_screen(self, entities_list: list[Entity], frame_style: str = 'default', screen: Optional[list[list[str]]] = None):
         """Renders and prints the complete screen to the console"""
         highlight = HIGHLIGHTS.get(frame_style, HIGHLIGHTS['default'])
-        screen = self.render(entities_list)
+        screen = self.render(entities_list, screen=screen)
 
         border = highlight[0] + highlight[1] * self.resolution[0] + highlight[0]
         print(border)
@@ -73,11 +83,7 @@ class SceneRenderSystem:
         """Renders all visible entities to a screen buffer. Returns 2D list representing the rendered screen with all entities drawn"""
         if screen is None: 
             screen = [[' ' for _ in range(self.resolution[0])] for _ in range(self.resolution[1])]
-        
-        entities_list = copy(entities_list)
-        for e in entities_list: 
-            if e.render is None or e.transform is None: 
-                entities_list.remove(e)
+        entities_list = [e for e in entities_list if e.render is not None and e.transform is not None]
 
         current_e_list_cache = {}
         entities_poses = {}
@@ -101,8 +107,7 @@ class SceneRenderSystem:
         else:
             target_pos = self.target_entity.transform.pos + np.array(
                 (0, 0) if self.target_entity.collider is None else 
-                (self.target_entity.collider.hitbox_x, self.target_entity.collider.hitbox_y)
-            ) // 2
+                (self.target_entity.collider.hitbox_x, self.target_entity.collider.hitbox_y)) // 2
             center_x = self.resolution[0] // 2 - round(target_pos[0])
             center_y = self.resolution[1] // 2 + round(target_pos[1])
 
