@@ -80,7 +80,7 @@ class SceneRenderSystem:
         print(border)
 
     def render(self, entities_list: list[Entity], screen: Optional[list[list[str]]] = None) -> list[list]:
-        """Renders all visible entities to a screen buffer. Returns 2D list representing the rendered screen with all entities drawn"""
+        """Renders all visible entities to a screen buffer. Returns 2D list representing the rendered screen with all entities drawn """
         if screen is None: 
             screen = [[' ' for _ in range(self.resolution[0])] for _ in range(self.resolution[1])]
         entities_list = [e for e in entities_list if e.render is not None and e.transform is not None]

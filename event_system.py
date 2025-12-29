@@ -6,7 +6,7 @@ from enum import IntEnum
 
 
 class Phase(IntEnum):
-    """Game loop phases"""
+    """Game loop phases """
     INPUT = 0
     SIMULATION = 1
     REACTION = 2

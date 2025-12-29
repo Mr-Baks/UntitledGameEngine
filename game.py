@@ -251,7 +251,7 @@ class Game:
             self._limit_fps(current_time)
 
     def _limit_fps(self, current_time):
-        """Accurately limits the frame rate to the target FPS"""
+        """Accurately limits the frame rate to the target FPS """
         target_frame_time = 1.0 / self.fps
         elapsed = time.time() - current_time
     

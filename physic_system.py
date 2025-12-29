@@ -35,7 +35,7 @@ class CollisionGrid:
                 self.entities_table[e].append(k)
     
     def get_nearby(self, entity: Entity): 
-        """Returns nearby entities with entity"""
+        """Returns nearby entities with entity """
         nearby_entities = set()
         checked = set()
         for cell in self.entities_table[entity]:

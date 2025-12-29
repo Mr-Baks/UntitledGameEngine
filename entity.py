@@ -14,7 +14,7 @@ class Entity:
         else: return None
 
     def add_component(self, component):
-        """Add an object of component to entity"""
+        """Add an object of component to entity """
         self.components_dict[self.get_type(component)] = component
         return self
     

@@ -6,7 +6,7 @@ from typing import Callable, Optional
 @dataclass
 class Transform:
     """Represents the spatial transformation of an entity in the game world.
-    
+     
     Attributes:
         pos: Position vector (x, y) in world coordinates as a numpy array.
     """

@@ -38,7 +38,7 @@ class PlayerController:
             on_press=self._jump
         )
         
-        # Движение влево (A/стрелка влево)
+        # Движение влево (A/стрелка влево) 
         input_system.bind_key(
             key='a',
             on_press=lambda: self._start_move(-1),
