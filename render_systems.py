@@ -6,10 +6,6 @@ from copy import copy
 from event_system import Event, EventBus, Phase
 
 
-HIGHLIGHTS = {'default': ('+', '-', '|'),  
-              'empty': (' ', ' ', ' '), 
-              'focused': ('#', '=', 'I')}
-
 class RenderFrameEvent(Event):
     def __init__(self, entities_list: list[Entity], background: Optional[list[list[str]]] = None ,frame_style: str = 'default', priority = 0, timestamp = None, source = None):
         super().__init__(priority, timestamp, source)
@@ -23,7 +19,6 @@ class SceneRenderSystem:
         self.target_entity = None
         self.resolution = resolution
         self.event_bus = event_bus
-        self.symbol = '#'
         self.last_entities_poses = {}
         self.last_screen = []
         self.entity_list_cache = {}
@@ -55,7 +50,7 @@ class SceneRenderSystem:
         if self.textures.get(str(render.texture_id)) is None:
             if collider is None: return
             if render.texture_id is None: render.texture_id = str(entity.id)
-            self.textures[str(render.texture_id)] = [self.symbol * collider.hitbox_x for _ in range(collider.hitbox_y)]
+            self.textures[str(render.texture_id)] = [render.default_sym * collider.hitbox_x for _ in range(collider.hitbox_y)]
         texture = self.textures[str(render.texture_id)]
 
         screen_x = target_x + round(transform.pos[0])

@@ -18,7 +18,7 @@ class Entity:
         self.components_dict[self.get_type(component)] = component
         return self
     
-    def add_components(self, components: list):
+    def add_components(self, *components):
         for c in components:
             self.add_component(c)
         return self

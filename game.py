@@ -1,7 +1,7 @@
 from entity import Entity
 from components import *
 from render_systems import *
-from physic_system import *
+from physics_system import *
 from event_system import *
 from pynput import keyboard as kb
 import time
@@ -182,7 +182,7 @@ class Game:
         self.event_bus = EventBus()
         self.input = Input()
         self.physics_system = PhysicsSystem(self.event_bus)
-        self.collision_system = CollisionSystem(self.event_bus, cell_size=(3, 3), elasticity=elasticity)
+        self.collision_system = CollisionSystem(self.event_bus, cell_size=(5, 5), elasticity=elasticity)
         self.render_system = SceneRenderSystem(resolution, self.event_bus)
 
     def add_entity(self, entity: Entity):
@@ -215,40 +215,43 @@ class Game:
         with variable rendering frames. It continuously updates physics,
         processes collisions, and renders frames until the game is stopped.
         """
+    def run(self):
         last_time = time.time()
-        tick_accumulator = 0
-        fixed_delta_time = 1 / self.tickspeed
+        accumulator = 0.0
+        fixed_dt = 1.0 / self.tickspeed
         self.is_running = True
-    
-        while self.is_running:
-            current_time = time.time()
-            delta_time = current_time - last_time
-            last_time = current_time
-            tick_accumulator += delta_time
-        
-            while tick_accumulator >= fixed_delta_time:
-                self.tick += 1
-            
-                self.event_bus.emit(Phase.SIMULATION, PhysicsUpdateEvent(self.entities_list, fixed_delta_time, priority=10))
-                self.event_bus.emit(Phase.SIMULATION, DetectCollisionEvent(self.entities_list))
 
-                self.event_bus.emit(Phase.REACTION, TickEvent(self))
-                for e in self.entities_list: 
-                    self.event_bus.emit(Phase.REACTION, EntityTickEvent(e, self))
-            
-                tick_accumulator -= fixed_delta_time
-            tick_accumulator = min(0.2, tick_accumulator)
+        event_bus = self.event_bus
+        entities = self.entities_list
+
+        physics = self.physics_system
+        collision = self.collision_system
+        render = self.render_system
+        input_sys = self.input
+
+        tick_event = TickEvent(self)
+        frame_event = FrameEvent(self)
+
+        while self.is_running:
+            now = time.time()
+            dt = now - last_time
+            last_time = now
+            accumulator += dt
+
+            while accumulator >= fixed_dt:
+                self.tick += 1
+                physics.update(entities, fixed_dt)
+                collision.process_collision(entities)
+                event_bus.emit(Phase.REACTION, tick_event)
+                accumulator -= fixed_dt
 
             self.frame_count += 1
-            self.event_bus.emit(Phase.RENDER, RenderFrameEvent(self.entities_list))
-            self.event_bus.emit(Phase.SIMULATION, FrameEvent(self))
-            for e in self.entities_list:
-                self.event_bus.emit(Phase.SIMULATION, EntityFrameEvent(e, self, priority=0))
-        
-            for phase in range(4):
-                self.event_bus.dispatch(phase)
+            event_bus.emit(Phase.REACTION, FrameEvent(self))
+            render.print_screen(entities)
+            self._limit_fps(now)
 
-            self._limit_fps(current_time)
+            for phase in range(0, 4):
+                event_bus.dispatch(phase)
 
     def _limit_fps(self, current_time):
         """Accurately limits the frame rate to the target FPS """
@@ -272,14 +275,3 @@ class FrameEvent(Event):
         super().__init__(priority, timestamp, source)
         self.game = game
 
-class EntityFrameEvent(Event):
-    def __init__(self, entity: Entity, game: Game, priority = 0, timestamp = None, source = None):
-        super().__init__(priority, timestamp, source)
-        self.entity = entity
-        self.game = game
-
-class EntityTickEvent(Event):
-    def __init__(self, entity: Entity, game: Game, priority = 0, timestamp = None, source = None):
-        super().__init__(priority, timestamp, source)
-        self.entity = entity
-        self.game = game

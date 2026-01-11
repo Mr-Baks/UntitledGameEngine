@@ -55,6 +55,7 @@ class Render:
     is_visible: bool = True
     draw_priority: int = 0
     texture_id: str = None
+    default_sym: str = '#'
 
 # @dataclass
 # class Script:

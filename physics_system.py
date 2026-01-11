@@ -70,11 +70,7 @@ class CollisionSystem:
         self.elasticity = elasticity
         self.event_bus = event_bus
 
-        event_bus.subscribe(id=1, phase=Phase.SIMULATION, event_type=DetectCollisionEvent, handler=self._handle_detect_col_event)
-        event_bus.subscribe(id=2, phase=Phase.REACTION, event_type=ProcessCollisionEvent, handler=self._handle_process_col_event, priority=1)
-
-    def _handle_detect_col_event(self, event: DetectCollisionEvent):
-        entities = event.entities
+    def process_collision(self, entities: list[Entity]):
         self.collision_grid.set_cells_table(entities)
 
         collided_pairs = set()
@@ -86,15 +82,9 @@ class CollisionSystem:
             for e2 in self._check_entity_collision(e1):
                 pair = tuple(sorted((e1, e2), key=id))
                 collided_pairs.add(pair)
-
-        if collided_pairs:
-            self.event_bus.emit(Phase.REACTION, ProcessCollisionEvent(collided_pairs))
-
-    def _handle_process_col_event(self, event: ProcessCollisionEvent):
-        for e1, e2 in event.collided_pairs:
-            self.resolve_collision(e1, e2)
-            self.event_bus.emit(Phase.REACTION, CollisionEvent(e1, e2))
-
+                self.resolve_collision(e1, e2)
+                self.event_bus.emit(Phase.REACTION, CollisionEvent(e1, e2))
+                
     def _check_entity_collision(self, entity: Entity) -> list[Entity]:
         if entity not in self.collision_grid.entities_table:
             return []
