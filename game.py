@@ -147,7 +147,7 @@ class Input:
     def __del__(self):
         """Destructor that ensures the keyboard listener is stopped"""
         self.stop()
-    
+
 class Game:
     """Main game engine class that manages the game loop, entities, and systems.
     
@@ -177,36 +177,20 @@ class Game:
         self.tickspeed = tickspeed
         self.tick = 0
         self.frame_count = 0
-        self.entities_list = []
 
+        self.world = World()
         self.event_bus = EventBus()
         self.input = Input()
-        self.physics_system = PhysicsSystem(self.event_bus)
+        self.physics_system = PhysicsSystem()
         self.collision_system = CollisionSystem(self.event_bus, cell_size=(5, 5), elasticity=elasticity)
         self.render_system = SceneRenderSystem(resolution, self.event_bus)
 
-    def add_entity(self, entity: Entity):
-        """Adds an entity to the game world"""
-        self.entities_list.append(entity)
-        return self
-    
-    def get_entity(self, id: int) -> Optional[Entity]:
-        """Retrieves an entity by ID"""
-        for e in self.entities_list:
-            if e.id == id: return e
-        return None
-    
     def set_player(self, entity: Entity):
         """Sets an entity as the player-controlled character"""
         if entity.transform is None: 
             return
         self.render_system.set_target(entity)
         self.player = entity
-
-    def remove_entity(self, id: int):
-        """Removes an entity from game world by ID"""
-        for e in self.entities_list:
-            if e.id == id: self.entities_list.remove(e)
 
     def run(self):
         """Starts the main game loop.
@@ -215,22 +199,18 @@ class Game:
         with variable rendering frames. It continuously updates physics,
         processes collisions, and renders frames until the game is stopped.
         """
-    def run(self):
         last_time = time.time()
         accumulator = 0.0
         fixed_dt = 1.0 / self.tickspeed
         self.is_running = True
 
         event_bus = self.event_bus
-        entities = self.entities_list
+        world = self.world
 
         physics = self.physics_system
         collision = self.collision_system
         render = self.render_system
         input_sys = self.input
-
-        tick_event = TickEvent(self)
-        frame_event = FrameEvent(self)
 
         while self.is_running:
             now = time.time()
@@ -238,16 +218,24 @@ class Game:
             last_time = now
             accumulator += dt
 
+            event_bus.dispatch(Phase.INPUT)
+
             while accumulator >= fixed_dt:
                 self.tick += 1
-                physics.update(entities, fixed_dt)
-                collision.process_collision(entities)
-                event_bus.emit(Phase.REACTION, tick_event)
+                physics.update(world.physics_entities, fixed_dt)
+                collision.process_collision(world.collidables)
                 accumulator -= fixed_dt
 
+                for e in world.entities_with_on_tick:
+                    for cb in e.script.on_tick:
+                        cb(e, self)
+
+            for e in world.entities_with_on_frame:
+                for cb in e.script.on_frame:
+                    cb(e, self)
+            
             self.frame_count += 1
-            event_bus.emit(Phase.REACTION, FrameEvent(self))
-            render.print_screen(entities)
+            render.print_screen(world.renderables)
             self._limit_fps(now)
 
             for phase in range(0, 4):
@@ -264,14 +252,4 @@ class Game:
                 time.sleep(sleep_time * 0.9)
             while time.time() - current_time < target_frame_time:
                 pass
-
-class TickEvent(Event):
-    def __init__(self, game: Game, priority = 0, timestamp = None, source = None):
-        super().__init__(priority, timestamp, source)
-        self.game = game
-
-class FrameEvent(Event):
-    def __init__(self, game: Game, priority = 0, timestamp = None, source = None):
-        super().__init__(priority, timestamp, source)
-        self.game = game
 

@@ -57,23 +57,25 @@ class Render:
     texture_id: str = None
     default_sym: str = '#'
 
-# @dataclass
-# class Script:
-#     """Attaches customizable behavior callbacks to an entity.
+class Script:
+    """Attaches customizable behavior callbacks to an entity.
     
-#     Attributes:
-#         on_init: Callback executed when the entity is initialized.
-#         on_tick: Callback executed each game tick.
-#         on_frame: Callback executed each game frame.
-#         on_remove: Callback executed when the entity is removed.
-#         on_collision: Callback executed when the entity collides with another.
+    Attributes:
+        on_tick: Callback executed each game tick.
+        on_frame: Callback executed each game frame.
     
-#     Note:
-#         All callbacks should be callable objects (functions, lambdas, etc.)
-#     """
-#     on_init: Optional[Callable] = lambda game: None
-#     on_tick: Optional[Callable] = lambda game: None
-#     on_frame: Optional[Callable] = lambda game: None
-#     on_remove: Optional[Callable] = lambda game: None
-#     on_collision: Optional[Callable] = lambda entity, other: None
+    Note:
+        All callbacks should be callable objects (functions, lambdas, etc.)
+    """
+    def __init__(self):
+        self.on_tick = []
+        self.on_frame = []
+
+    def add_tick(self, callback: Callable[[float], None]):
+        self.on_tick.append(callback)
+        return self
+
+    def add_frame(self, callback: Callable[[], None]):
+        self.on_frame.append(callback)
+        return self
     

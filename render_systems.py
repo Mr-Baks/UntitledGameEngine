@@ -4,15 +4,70 @@ from typing import Optional
 import json
 from copy import copy
 from event_system import Event, EventBus, Phase
-
-
-class RenderFrameEvent(Event):
-    def __init__(self, entities_list: list[Entity], background: Optional[list[list[str]]] = None ,frame_style: str = 'default', priority = 0, timestamp = None, source = None):
-        super().__init__(priority, timestamp, source)
-        self.entities_list = entities_list
-        self.background = background
-        self.frame_style = frame_style
         
+
+class World:
+    def __init__(self):
+        self.entities = []
+        self.renderables = []
+        self.collidables = []
+        self.physics_entities = []
+        self.entities_with_on_tick = []
+        self.entities_with_on_frame = []
+
+    def add_entity(self, entity: Entity):
+        self.entities.append(entity)
+
+        if entity.transform is not None:
+            if entity.render is not None:
+                self.renderables.append(entity)
+
+            if entity.physics is not None:
+                self.physics_entities.append(entity)
+
+            if entity.collider is not None:
+                self.collidables.append(entity)
+
+        script = entity.script
+        if script is not None:
+            if script.on_tick is not []:
+                self.entities_with_on_tick.append(entity)
+
+            if script.on_frame is not []:
+                self.entities_with_on_frame.append(entity)
+
+        return self
+
+    def get_entity(self, id: int) -> Optional[Entity]:
+        for e in self.entities:
+            if e.id == id:
+                return e
+        return None
+
+    def remove_entity(self, id: int) -> Optional[Entity]:
+        removed = self.get_entity(id)
+
+        if removed is None:
+            return None
+
+        self.entities.remove(removed)
+        if removed in self.renderables:
+            self.renderables.remove(removed)
+
+        if removed in self.collidables:
+            self.collidables.remove(removed)
+
+        if removed in self.physics_entities:
+            self.physics_entities.remove(removed)
+
+        if removed in self.entities_with_on_tick:
+            self.entities_with_on_tick.remove(removed)
+
+        if removed in self.entities_with_on_frame:
+            self.entities_with_on_frame.remove(removed)
+
+        return removed
+
 class SceneRenderSystem:
     """Handles rendering of entities to a console-based screen with camera tracking. This system manages texture loading, entity rendering with draw priorities"""
     def __init__(self, resolution: tuple[int], event_bus: EventBus):
@@ -23,11 +78,6 @@ class SceneRenderSystem:
         self.last_screen = []
         self.entity_list_cache = {}
         self.load_textures()
-
-        self.event_bus.subscribe(0, Phase.RENDER, RenderFrameEvent, self._hadle_render_event)
-
-    def _hadle_render_event(self, event: RenderFrameEvent):
-        self.print_screen(event.entities_list, screen=event.background, frame_style=event.frame_style)
 
     def load_textures(self):
         """Loads texture definitions from textures.json file"""
@@ -43,9 +93,6 @@ class SceneRenderSystem:
         collider = entity.collider
         render = entity.render
         transform = entity.transform
-
-        if render is None or transform is None or not render.is_visible: 
-            return
 
         if self.textures.get(str(render.texture_id)) is None:
             if collider is None: return
@@ -65,7 +112,7 @@ class SceneRenderSystem:
 
     def print_screen(self, entities_list: list[Entity], frame_style: str = 'default', screen: Optional[list[list[str]]] = None):
         """Renders and prints the complete screen to the console"""
-        highlight = HIGHLIGHTS.get(frame_style, HIGHLIGHTS['default'])
+        highlight = ('+', '-', '|')
         screen = self.render(entities_list, screen=screen)
 
         border = highlight[0] + highlight[1] * self.resolution[0] + highlight[0]

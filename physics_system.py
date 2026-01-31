@@ -1,3 +1,4 @@
+from collections import defaultdict
 from components import *
 from entity import *
 from event_system import *
@@ -5,101 +6,106 @@ import numpy as np
 
 
 class CollisionGrid:
-    """Simple spatial grid for optimization"""
-    def __init__(self, cell_size: tuple[int]):
-        self.cell_size = np.array(cell_size)
-        self.cells_table = {}
-        self.entities_table = {}
+    """Spatial hash grid for broad-phase collision detection.
+
+    Each entity occupies one or more cells depending on its hitbox size.
+    Nearby entities are retrieved by looking at the entity's cells and adjacent cells.
+    """
+
+    def __init__(self, cell_size: tuple[int, int]):
+        self.cell_w, self.cell_h = cell_size
+        self.cells_table: dict[tuple[int, int], list[Entity]] = defaultdict(list)
+        self.entities_table: dict[int, list[tuple[int, int]]] = {}
 
     def _get_cell_keys(self, entity: Entity):
-        """Marks up spatial grid"""
-        if entity.collider is None: return
-        start = entity.transform.pos // self.cell_size
-        end = (entity.transform.pos + np.array((entity.collider.hitbox_x, entity.collider.hitbox_y))) // self.cell_size + 1
-        start, end = start.astype(int), end.astype(int)
+        """Compute the set of grid cells that the entity occupies."""
+        c = entity.collider
+        t = entity.transform
+        if c is None or t is None:
+            return []
 
-        for cell_y in range(start[1], end[1]):
-            for cell_x in range(start[0], end[0]): 
-                yield (cell_x, cell_y)
+        x1 = int(t.pos[0] // self.cell_w)
+        y1 = int(t.pos[1] // self.cell_h)
+        x2 = int((t.pos[0] + c.hitbox_x) // self.cell_w) + 1
+        y2 = int((t.pos[1] + c.hitbox_y) // self.cell_h) + 1
+
+        return [(x, y) for y in range(y1, y2) for x in range(x1, x2)]
 
     def set_cells_table(self, entities: list[Entity]):
-        """Sets dictionaries with entities and their cells"""
-        self.cells_table = {}
-        self.entities_table = {}
-        
+        """Populate cells_table and entities_table with all entities."""
+        self.cells_table.clear()
+        self.entities_table.clear()
+
         for e in entities:
-            if self.entities_table.get(e) is None: self.entities_table[e] = []
+            eid = id(e)
+            cell_list = []
+            self.entities_table[eid] = cell_list
+
             for k in self._get_cell_keys(e):
-                if self.cells_table.get(k) is None: self.cells_table[k] = []
                 self.cells_table[k].append(e)
-                self.entities_table[e].append(k)
-    
-    def get_nearby(self, entity: Entity): 
-        """Returns nearby entities with entity """
-        nearby_entities = set()
-        checked = set()
-        for cell in self.entities_table[entity]:
-            for x in range(-1, 2):
-                for y in range(-1, 2):
-                    nearby_cell = (cell[0] + x, cell[1] + y)
-                    if self.cells_table.get(nearby_cell) is None or nearby_cell in checked: continue
-                    checked.add(nearby_cell)
-                    for e in self.cells_table[nearby_cell]: 
-                        if e != entity and not e in nearby_entities: nearby_entities.add(e)
-        return list(nearby_entities)
+                cell_list.append(k)
 
-class DetectCollisionEvent(Event):
-    def __init__(self, entities: list[Entity], priority=0, timestamp=None, source=None):
-        super().__init__(priority, timestamp, source)
-        self.entities = entities
+    def get_nearby(self, entity: Entity):
+        """Return a set of entities that are in the same or neighboring cells."""
+        eid = id(entity)
+        cells = self.entities_table.get(eid)
+        if not cells:
+            return set()
 
-class ProcessCollisionEvent(Event):
-    def __init__(self, collided_pairs: set[tuple[Entity, Entity]], priority=0, timestamp=None, source=None):
-        super().__init__(priority, timestamp, source)
-        self.collided_pairs = collided_pairs
+        nearby = set()
+        for cx, cy in cells:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    bucket = self.cells_table.get((cx + dx, cy + dy))
+                    if not bucket:
+                        continue
+                    for e in bucket:
+                        if e is not entity:
+                            nearby.add(e)
+        return nearby
 
 class CollisionEvent(Event):
+    """Event emitted when two entities collide."""
     def __init__(self, e1: Entity, e2: Entity, priority=0, timestamp=None, source=None):
         super().__init__(priority, timestamp, source)
         self.e1 = e1
         self.e2 = e2
 
 class CollisionSystem:
-    def __init__(self, event_bus: EventBus, cell_size: tuple[float]=(2, 2), elasticity: float=0.8):
+    """Collision detection and resolution system using spatial hashing."""
+
+    def __init__(self, event_bus: EventBus, cell_size=(2, 2), elasticity: float = 0.8):
         self.collision_grid = CollisionGrid(cell_size)
         self.elasticity = elasticity
         self.event_bus = event_bus
 
     def process_collision(self, entities: list[Entity]):
+        """Detect and resolve collisions among all given entities."""
         self.collision_grid.set_cells_table(entities)
-
-        collided_pairs = set()
+        processed_pairs = set()
 
         for e1 in entities:
-            if e1.collider is None or e1.transform is None or e1.physics is None or not e1.collider.has_collision:
+            if not e1.collider.has_collision:
                 continue
 
-            for e2 in self._check_entity_collision(e1):
-                pair = tuple(sorted((e1, e2), key=id))
-                collided_pairs.add(pair)
-                self.resolve_collision(e1, e2)
-                self.event_bus.emit(Phase.REACTION, CollisionEvent(e1, e2))
-                
-    def _check_entity_collision(self, entity: Entity) -> list[Entity]:
-        if entity not in self.collision_grid.entities_table:
-            return []
+            id1 = id(e1)
+            for e2 in self.collision_grid.get_nearby(e1):
+                if not e2.collider.has_collision:
+                    continue
 
-        collided = []
+                id2 = id(e2)
+                pair = (id1, id2) if id1 < id2 else (id2, id1)
+                if pair in processed_pairs:
+                    continue
 
-        for other in self.collision_grid.get_nearby(entity):
-            if other.collider is None or other.transform is None or other.physics is None or not other.collider.has_collision:
-                continue
-            if self._aabb_intersect(entity, other):
-                collided.append(other)
+                if self._aabb_intersect(e1, e2):
+                    processed_pairs.add(pair)
+                    self.resolve_collision(e1, e2)
+                    self.event_bus.emit(Phase.REACTION, CollisionEvent(e1, e2))
 
-        return collided
-
-    def _aabb_intersect(self, a: Entity, b: Entity) -> bool:
+    @staticmethod
+    def _aabb_intersect(a: Entity, b: Entity) -> bool:
+        """Check if two entities' axis-aligned bounding boxes intersect."""
         ax1, ay1 = a.transform.pos
         ax2 = ax1 + a.collider.hitbox_x
         ay2 = ay1 + a.collider.hitbox_y
@@ -111,7 +117,9 @@ class CollisionSystem:
         return ax1 <= bx2 and ax2 >= bx1 and ay1 <= by2 and ay2 >= by1
 
     def resolve_collision(self, entity1: Entity, entity2: Entity):
+        """Resolve collision between two entities using positional correction and impulse."""
         overlap_x = min(entity1.transform.pos[0] + entity1.collider.hitbox_x, entity2.transform.pos[0] + entity2.collider.hitbox_x) - max(entity1.transform.pos[0], entity2.transform.pos[0])
+
         overlap_y = min(entity1.transform.pos[1] + entity1.collider.hitbox_y, entity2.transform.pos[1] + entity2.collider.hitbox_y) - max(entity1.transform.pos[1], entity2.transform.pos[1])
 
         if overlap_x < overlap_y:
@@ -138,30 +146,16 @@ class CollisionSystem:
         entity1.physics.velocity += impulse / entity1.physics.mass
         entity2.physics.velocity -= impulse / entity2.physics.mass
 
-class PhysicsUpdateEvent(Event):
-    def __init__(self, entities: list[Entity], delta_time: float, priority = 0, timestamp = None, source = None):
-        super().__init__(priority, timestamp, source)
-        self.entities = entities
-        self.delta_time = delta_time
-
 class PhysicsSystem:
-    def __init__(self, event_bus: EventBus):
-        event_bus.subscribe(0, Phase.SIMULATION, PhysicsUpdateEvent, self._handle_upd_event)
+    def update(self, entities: list[Entity], delta_time: float): 
+        """Update states of entities per delta time""" 
+        for e in entities: 
+            t = np.float32(delta_time) 
 
-    def _handle_upd_event(self, event: PhysicsUpdateEvent):
-        self.update(event.entities, event.delta_time)
-
-    def update(self, entities: list[Entity], delta_time: float):
-        """Update states of entities per delta time"""
-        for e in entities:
-            if e.transform is None or e.physics is None: continue
-
-            t = np.float32(delta_time)
-        
             e.physics.velocity = e.physics.velocity + e.physics.acceleration * t 
-            vel_magnitude = np.linalg.norm(e.physics.velocity)
-            if vel_magnitude > e.physics.velocity_limit:
-                e.physics.velocity = (e.physics.velocity / vel_magnitude) * e.physics.velocity_limit
+
+            vel_magnitude = np.linalg.norm(e.physics.velocity) 
+            if vel_magnitude > e.physics.velocity_limit: 
+                e.physics.velocity = (e.physics.velocity / vel_magnitude) * e.physics.velocity_limit 
 
             e.transform.pos = e.transform.pos + e.physics.velocity * t * np.array((1, 0.5), dtype=np.float32)
-
