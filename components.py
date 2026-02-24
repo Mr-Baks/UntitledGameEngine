@@ -1,81 +1,67 @@
 from dataclasses import dataclass
 import numpy as np
-from typing import Callable, Optional
+from typing import Callable, List
 
 
 @dataclass
 class Transform:
-    """Represents the spatial transformation of an entity in the game world.
-     
-    Attributes:
-        pos: Position vector (x, y) in world coordinates as a numpy array.
-    """
-    pos: np.ndarray[np.float32]
+    """Entity position in world coordinates."""
+    pos: np.ndarray 
+    dirty: bool = True
 
 @dataclass
 class Physics:
-    """Contains physical properties and state for rigid body simulation.
-    
-    Attributes:
-        mass: Mass of the object in arbitrary units.
-        velocity: Current velocity vector as a numpy array.
-        acceleration: Current acceleration vector as a numpy array.
-        velocity_limit: Maximum allowable magnitude of velocity.
-    """
+    """Physical properties and motion state of an entity."""
     mass: np.float32
-    velocity: np.ndarray[np.float32]
-    acceleration: np.ndarray[np.float32]
-    velocity_limit: np.float32
+    velocity: np.ndarray  
+    acceleration: np.ndarray  
+    velocity_limit: np.float32 = np.float32(100)
+    is_static: bool = False
 
 @dataclass
 class Collider:
-    """Defines collision detection properties for an entity.
-    
-    Attributes:
-        hitbox_x: Width of the collision hitbox.
-        hitbox_y: Height of the collision hitbox.
-        has_collision: Whether this entity participates in collision detection.
-                      Defaults to True.
-    """
-    hitbox_x: int
-    hitbox_y: int
+    """Axis-aligned bounding box used for collision detection.
+    Center is at Transform.pos."""
+    half_x: float = 0.5
+    half_y: float = 0.5
     has_collision: bool = True
+    elasticity: float = 0.0
 
 @dataclass
 class Render:
-    """Controls rendering and visual representation of an entity.
-    
-    Attributes:
-        is_visible: Whether the entity should be rendered. Defaults to True.
-        draw_priority: Determines rendering order (lower values render first).
-                      Defaults to 0.
-        texture_id: Identifier for the texture to use. None indicates no texture.
-                   Defaults to None.
-    """
+    """Visual representation properties of an entity."""
     is_visible: bool = True
     draw_priority: int = 0
-    texture_id: str = None
+    name: str | None = None
     default_sym: str = '#'
+    transparent_sym: str = '\u8841'
+    screen_x: int = 0
+    screen_y: int = 0
+
+@dataclass
+class Camera:
+    """Camera properties attached to an entity."""
+    offset: np.ndarray  
+    zoom: float = 1.0
+    active: bool = True
+    mode: str = 'world'  # 'world' | 'screen'
 
 class Script:
-    """Attaches customizable behavior callbacks to an entity.
-    
-    Attributes:
-        on_tick: Callback executed each game tick.
-        on_frame: Callback executed each game frame.
-    
-    Note:
-        All callbacks should be callable objects (functions, lambdas, etc.)
-    """
-    def __init__(self):
-        self.on_tick = []
-        self.on_frame = []
+    """Container for custom per-entity update callbacks."""
+    def __init__(self) -> None:
+        self.on_tick: List[Callable[['Entity', 'Game'], None]] = []
+        self.on_frame: List[Callable[['Entity', 'Game'], None]] = []
 
-    def add_tick(self, callback: Callable[[float], None]):
+    def add_tick(self, callback: Callable[['Entity', 'Game'], None]) -> 'Script':
+        """Register callback to be called every physics tick.
+        Args:
+            callback: Function(entity: Entity, game: Game) -> None"""
         self.on_tick.append(callback)
         return self
 
-    def add_frame(self, callback: Callable[[], None]):
+    def add_frame(self, callback: Callable[['Entity', 'Game'], None]) -> 'Script':
+        """Register callback to be called every render frame.
+        Args:
+            callback: Function(entity: Entity, game: Game) -> None"""
         self.on_frame.append(callback)
         return self
-    

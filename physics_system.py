@@ -6,49 +6,77 @@ import numpy as np
 
 
 class CollisionGrid:
-    """Spatial hash grid for broad-phase collision detection.
-
-    Each entity occupies one or more cells depending on its hitbox size.
-    Nearby entities are retrieved by looking at the entity's cells and adjacent cells.
-    """
-
-    def __init__(self, cell_size: tuple[int, int]):
+    """Spatial hash grid for broad-phase collision detection."""
+    def __init__(self, cell_size: tuple[int, int] = (5, 5)):
         self.cell_w, self.cell_h = cell_size
-        self.cells_table: dict[tuple[int, int], list[Entity]] = defaultdict(list)
-        self.entities_table: dict[int, list[tuple[int, int]]] = {}
+        self.cells: dict[tuple[int, int], list[Entity]] = defaultdict(list)
+        self.entity_cells: dict[int, set[tuple[int, int]]] = {}
 
-    def _get_cell_keys(self, entity: Entity):
-        """Compute the set of grid cells that the entity occupies."""
+    def _get_cell_keys(self, entity: Entity) -> list[tuple[int, int]]:
+        """Calculate all cell coordinates entity overlaps."""
         c = entity.collider
         t = entity.transform
         if c is None or t is None:
             return []
 
-        x1 = int(t.pos[0] // self.cell_w)
-        y1 = int(t.pos[1] // self.cell_h)
-        x2 = int((t.pos[0] + c.hitbox_x) // self.cell_w) + 1
-        y2 = int((t.pos[1] + c.hitbox_y) // self.cell_h) + 1
+        min_x = t.pos[0] - c.half_x
+        min_y = t.pos[1] - c.half_y
+        max_x = t.pos[0] + c.half_x
+        max_y = t.pos[1] + c.half_y
+
+        x1 = int(min_x // self.cell_w)
+        y1 = int(min_y // self.cell_h)
+        x2 = int(max_x // self.cell_w) + 1
+        y2 = int(max_y // self.cell_h) + 1
 
         return [(x, y) for y in range(y1, y2) for x in range(x1, x2)]
 
-    def set_cells_table(self, entities: list[Entity]):
-        """Populate cells_table and entities_table with all entities."""
-        self.cells_table.clear()
-        self.entities_table.clear()
-
-        for e in entities:
-            eid = id(e)
-            cell_list = []
-            self.entities_table[eid] = cell_list
-
-            for k in self._get_cell_keys(e):
-                self.cells_table[k].append(e)
-                cell_list.append(k)
-
-    def get_nearby(self, entity: Entity):
-        """Return a set of entities that are in the same or neighboring cells."""
+    def insert(self, entity: Entity) -> None:
+        """Add entity to all overlapping cells."""
         eid = id(entity)
-        cells = self.entities_table.get(eid)
+        cells = set(self._get_cell_keys(entity))
+        self.entity_cells[eid] = cells
+        for cell in cells:
+            self.cells[cell].append(entity)
+
+    def remove(self, entity: Entity) -> None:
+        """Remove entity from all cells it was in."""
+        eid = id(entity)
+        cells = self.entity_cells.pop(eid, None)
+        if not cells:
+            return
+        for cell in cells:
+            bucket = self.cells.get(cell)
+            if bucket and entity in bucket:
+                bucket.remove(entity)
+            if not bucket:
+                del self.cells[cell]
+
+    def update(self, entity: Entity) -> None:
+        """Update entity's cell membership if position changed."""
+        eid = id(entity)
+        old_cells = self.entity_cells.get(eid, set())
+        new_cells = set(self._get_cell_keys(entity))
+
+        if old_cells == new_cells:
+            return  
+
+        for cell in old_cells - new_cells:
+            bucket = self.cells.get(cell)
+            if bucket and entity in bucket:
+                bucket.remove(entity)
+            if not bucket:
+                del self.cells[cell]
+
+        for cell in new_cells - old_cells:
+            self.cells[cell].append(entity)
+
+        self.entity_cells[eid] = new_cells
+
+    def get_nearby(self, entity: Entity) -> Set[Entity]:
+        """Return set of entities in neighboring cells (excludes self)."""
+        eid = id(entity)
+        cells = self.entity_cells.get(eid, ())
         if not cells:
             return set()
 
@@ -56,44 +84,45 @@ class CollisionGrid:
         for cx, cy in cells:
             for dx in (-1, 0, 1):
                 for dy in (-1, 0, 1):
-                    bucket = self.cells_table.get((cx + dx, cy + dy))
-                    if not bucket:
-                        continue
-                    for e in bucket:
-                        if e is not entity:
-                            nearby.add(e)
+                    bucket = self.cells.get((cx + dx, cy + dy))
+                    if bucket:
+                        for e in bucket:
+                            if e is not entity:
+                                nearby.add(e)
         return nearby
 
 class CollisionEvent(Event):
-    """Event emitted when two entities collide."""
+    """Detects and resolves collisions using spatial hash."""
     def __init__(self, e1: Entity, e2: Entity, priority=0, timestamp=None, source=None):
         super().__init__(priority, timestamp, source)
         self.e1 = e1
         self.e2 = e2
 
 class CollisionSystem:
-    """Collision detection and resolution system using spatial hashing."""
-
-    def __init__(self, event_bus: EventBus, cell_size=(2, 2), elasticity: float = 0.8):
+    """Detects and resolves collisions using spatial hash."""
+    def __init__(self, event_bus: EventBus, cell_size=(5, 5), elasticity: float = 0.8):
         self.collision_grid = CollisionGrid(cell_size)
         self.elasticity = elasticity
         self.event_bus = event_bus
 
-    def process_collision(self, entities: list[Entity]):
-        """Detect and resolve collisions among all given entities."""
-        self.collision_grid.set_cells_table(entities)
+    def process_collision(self, entities: list[Entity]) -> None:
+        """Detect overlaps and resolve collisions for given entities using provided grid."""
         processed_pairs = set()
 
+        for e in entities:
+            if e.collider and e.collider.has_collision:
+                if hasattr(e, 'physics') and not e.physics.is_static:
+                    self.collision_grid.update(e)
+
         for e1 in entities:
-            if not e1.collider.has_collision:
+            if not e1.collider or not e1.collider.has_collision:
                 continue
 
-            id1 = id(e1)
             for e2 in self.collision_grid.get_nearby(e1):
-                if not e2.collider.has_collision:
+                if e2 is e1 or not e2.collider or not e2.collider.has_collision:
                     continue
 
-                id2 = id(e2)
+                id1, id2 = id(e1), id(e2)
                 pair = (id1, id2) if id1 < id2 else (id2, id1)
                 if pair in processed_pairs:
                     continue
@@ -105,57 +134,85 @@ class CollisionSystem:
 
     @staticmethod
     def _aabb_intersect(a: Entity, b: Entity) -> bool:
-        """Check if two entities' axis-aligned bounding boxes intersect."""
-        ax1, ay1 = a.transform.pos
-        ax2 = ax1 + a.collider.hitbox_x
-        ay2 = ay1 + a.collider.hitbox_y
+        """Check if two AABBs overlap (centers at transform.pos)."""
+        dx = abs(a.transform.pos[0] - b.transform.pos[0])
+        dy = abs(a.transform.pos[1] - b.transform.pos[1])
+        return (dx < (a.collider.half_x + b.collider.half_x) and
+                dy < (a.collider.half_y + b.collider.half_y))
 
-        bx1, by1 = b.transform.pos
-        bx2 = bx1 + b.collider.hitbox_x
-        by2 = by1 + b.collider.hitbox_y
+    def resolve_collision(self, e1: Entity, e2: Entity) -> None:
+        """Resolve penetration and apply impulse for two colliding entities."""
+        pos1 = e1.transform.pos
+        pos2 = e2.transform.pos
+        c1 = e1.collider
+        c2 = e2.collider
 
-        return ax1 <= bx2 and ax2 >= bx1 and ay1 <= by2 and ay2 >= by1
+        dx = pos2[0] - pos1[0]
+        dy = pos2[1] - pos1[1]
 
-    def resolve_collision(self, entity1: Entity, entity2: Entity):
-        """Resolve collision between two entities using positional correction and impulse."""
-        overlap_x = min(entity1.transform.pos[0] + entity1.collider.hitbox_x, entity2.transform.pos[0] + entity2.collider.hitbox_x) - max(entity1.transform.pos[0], entity2.transform.pos[0])
+        overlap_x = (c1.half_x + c2.half_x) - abs(dx)
+        overlap_y = (c1.half_y + c2.half_y) - abs(dy)
 
-        overlap_y = min(entity1.transform.pos[1] + entity1.collider.hitbox_y, entity2.transform.pos[1] + entity2.collider.hitbox_y) - max(entity1.transform.pos[1], entity2.transform.pos[1])
-
-        if overlap_x < overlap_y:
-            normal = np.array([1.0, 0.0]) if entity1.transform.pos[0] < entity2.transform.pos[0] else np.array([-1.0, 0.0])
-            penetration = overlap_x
-        else:
-            normal = np.array([0.0, 1.0]) if entity1.transform.pos[1] < entity2.transform.pos[1] else np.array([0.0, -1.0])
-            penetration = overlap_y
-
-        correction = normal * penetration * 0.5
-        entity1.transform.pos -= correction
-        entity2.transform.pos += correction
-
-        relative_velocity = entity1.physics.velocity - entity2.physics.velocity
-        velocity_norm = np.dot(relative_velocity, normal)
-
-        if velocity_norm < 0:
+        if overlap_x <= 0 or overlap_y <= 0:
             return
 
-        impulse_scalar = -(1 + self.elasticity) * velocity_norm
-        impulse_scalar /= (1 / entity1.physics.mass + 1 / entity2.physics.mass)
+        if overlap_x < overlap_y:
+            normal = np.array([1.0, 0.0]) if dx > 0 else np.array([-1.0, 0.0])
+            penetration = overlap_x
+        else:
+            normal = np.array([0.0, 1.0]) if dy > 0 else np.array([0.0, -1.0])
+            penetration = overlap_y
+
+        total_mass = e1.physics.mass + e2.physics.mass
+        correction = (normal * penetration * 1.1) / total_mass
+
+        rel_vel = e1.physics.velocity - e2.physics.velocity
+        vel_along_normal = np.dot(rel_vel, normal)
+        if vel_along_normal < 0:
+            return
+
+        impulse_scalar = (-(1 + (e1.collider.elasticity + e2.collider.elasticity) / 2) * vel_along_normal)
+        impulse_scalar /= (1 / e1.physics.mass + 1 / e2.physics.mass)
 
         impulse = impulse_scalar * normal
-        entity1.physics.velocity += impulse / entity1.physics.mass
-        entity2.physics.velocity -= impulse / entity2.physics.mass
+        e1.physics.velocity += impulse / e1.physics.mass
+        e2.physics.velocity -= impulse / e2.physics.mass
 
+        if e1.physics.is_static:
+            e1.transform.pos -= 0 
+            e2.transform.pos += correction / total_mass
+        elif e2.physics.is_static:
+            e1.transform.pos -= correction / total_mass
+            e2.transform.pos += 0
+        else:
+            e1.transform.pos -= correction / e2.physics.mass
+            e2.transform.pos += correction / e1.physics.mass
+
+
+        
 class PhysicsSystem:
-    def update(self, entities: list[Entity], delta_time: float): 
-        """Update states of entities per delta time""" 
+    def __init__(self, y_scale: float = 0.5):
+        self.y_scale_vec = np.array((1, y_scale), dtype=np.float32)
+
+    def update(self, entities: list[Entity], delta_time: float) -> None: 
+        """Update position and velocity for all non-static entities."""
+        dt = np.float32(delta_time) 
         for e in entities: 
-            t = np.float32(delta_time) 
+            p = e.physics
+            t = e.transform
 
-            e.physics.velocity = e.physics.velocity + e.physics.acceleration * t 
+            if p.is_static: continue
 
-            vel_magnitude = np.linalg.norm(e.physics.velocity) 
-            if vel_magnitude > e.physics.velocity_limit: 
-                e.physics.velocity = (e.physics.velocity / vel_magnitude) * e.physics.velocity_limit 
+            p.velocity = p.velocity + p.acceleration * dt 
+            vel_magnitude = np.linalg.norm(p.velocity)
 
-            e.transform.pos = e.transform.pos + e.physics.velocity * t * np.array((1, 0.5), dtype=np.float32)
+            if -0.05 < vel_magnitude < 0.05: 
+                p.velocity = np.zeros(2, dtype=np.float32)
+                t.dirty = False
+            else:
+                if vel_magnitude > p.velocity_limit: 
+                    p.velocity = (p.velocity / vel_magnitude) * p.velocity_limit
+
+                t.pos = t.pos + p.velocity * dt * self.y_scale_vec
+                
+                t.dirty = True

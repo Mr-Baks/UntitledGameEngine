@@ -1,70 +1,83 @@
-import time
 from game import *
-from components import *
-from entity import *
-import numpy as np
-from numpy import array as npa
-from random import randint as ri
 
-class StatsScript:
-    def __init__(self):
-        self.last_print = time.time()
-        self.frames = 0
-        self.ticks = 0
-        self.last_time = time.time()
 
-    def on_tick(self, entity, game):
-        self.ticks += 1
+id_count = 0
+def get_id():
+    global id_count
+    id_count += 1
+    return id_count
 
-    def on_frame(self, entity, game):
-        self.frames += 1
-        now = time.time()
+npa = lambda *z: np.array(z, dtype=np.float32)
 
-        if now - self.last_print >= 0.5:
-            dt = now - self.last_time
-            fps = self.frames / dt
-            tps = self.ticks / dt
+def debug(e: Entity, g: Game):
+    print(e.physics.velocity)
 
-            print(
-                f"[STATS] "
-                f"FPS: {fps:6.1f} | "
-                f"TPS: {tps:6.1f} | "
-                f"Entities: {len(game.world.entities)}"
-            )
+def spawn_platform(x, y, w, h, game: Game, scene: Scene):
+    e = Entity(get_id()).add_components(Transform(npa(x, y)), Render(), Collider(w / 2, h / 2), Physics(np.float32(100000), npa(0, 0), npa(0, 0), is_static=True))
+    game.scene_manager.add_entity(scene, e)
 
-            self.frames = 0
-            self.ticks = 0
-            self.last_time = now
-            self.last_print = now 
+def spawn_player(x, y, game: Game, scene: Scene):
+    e = Entity(get_id()).add_components(Transform(npa(x, y)), Render(name='player'), Collider(6, 1.5), Physics(np.float32(20), npa(0, 0), npa(0, 0)), Camera(npa(0, 0)), Script().add_frame(debug))
+    game.scene_manager.add_entity(scene, e)
+    return e
 
-def spawn_test_entities(game):
-    for i in range(1000):
-        t = Transform(pos=npa((i % 100, i // 100), dtype=np.float32))
-        p = Physics(
-            velocity=npa((ri(1, 10), ri(1, 10)), dtype=np.float32),
-            mass=np.float32(ri(1, 200)),
-            acceleration=npa((0.0, 0.0), dtype=np.float32),
-            velocity_limit=np.float32(200)
-        )
-        c = Collider(hitbox_x=ri(3, 10), hitbox_y=ri(3, 10))
-        s = Script()
-        r = Render()
+g = Game((120, 20), 20, 40, background_sym=' ')
 
-        e = Entity(i).add_components(t, p, c, s, r)
-        game.world.add_entity(e)
+sg = SceneGroup('main')
+s = Scene('main')
+s2 = Scene('not_main')
+sg.add(s).add(s2)
 
-def create_stats_entity(game):
-    stats = StatsScript()
-    s = Script()
-    s.on_tick.append(stats.on_tick)
-    s.on_frame.append(stats.on_frame)
+g.scene_manager.register(sg)
+g.scene_manager.load('main')
 
-    e = Entity(-1).add_components(Transform(pos=npa((0, 0))), s)
-    game.set_player(e)
-    game.world.add_entity(e)
-game = Game(resolution=(120, 40), fps=20, tickspeed=25)
+spawn_platform(20, 0, 10, 3, g, s2)
+spawn_platform(0, 10, 1000, 3, g, s2)
 
-spawn_test_entities(game)
-create_stats_entity(game)
+player = spawn_player(0, 0, g, s)
+g.set_player(player)
 
-game.run()
+def move_r_p():
+    player.physics.velocity += npa(15, 0)
+
+def move_r_r():
+    player.physics.velocity -= npa(15, 0)
+
+def move_l_p():
+    player.physics.velocity += npa(-15, 0)
+
+def move_l_r():
+    player.physics.velocity -= npa(-15, 0)
+
+def move_u_p():
+    player.physics.velocity += npa(0, -15)
+
+def move_u_r():
+    player.physics.velocity -= npa(0, -15)
+
+def move_d_p():
+    player.physics.velocity += npa(0, 15)
+
+def move_d_r():
+    player.physics.velocity -= npa(0, 15)
+
+def reset():
+    player.physics.velocity *= 0
+
+def zoom_plus():
+    g.player.camera.zoom *= 1.1
+
+def zoom_minus():
+    g.player.camera.zoom /= 1.1
+
+g.input.bind_key('d', on_press=move_r_p, on_release=move_r_r)
+g.input.bind_key('a', on_press=move_l_p, on_release=move_l_r)
+g.input.bind_key('w', on_press=move_u_p, on_release=move_u_r)
+g.input.bind_key('s', on_press=move_d_p, on_release=move_d_r)
+g.input.bind_key('z', on_press=zoom_plus)
+g.input.bind_key('x', on_press=zoom_minus)
+g.input.bind_key('r', on_press=reset)
+
+g.render_system.main_camera.camera.zoom = 1
+
+g.run()

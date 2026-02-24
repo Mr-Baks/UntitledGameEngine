@@ -1,30 +1,36 @@
-from components import *
-from typing import Dict, Any, Optional, Callable, List
+from typing import Set, Dict, Type, Any, Optional
+from components import Transform, Physics, Collider, Render, Camera, Script
 
 
 class Entity:
+    """Basic ECS entity. ID + collection of components."""
+
+    __slots__ = ('id', 'components', 'components_dict')
+
     def __init__(self, id: int):
         self.id = id
-        self.components: list[type] = [Transform, Render, Physics, Collider, Script]
-        self.components_dict: Dict[type, Any] = {}
+        self.components: Set[Type] = set()
+        self.components_dict: Dict[Type, Any] = {}
 
-    def add_component(self, component):
-        """Add a component instance to the entity"""
+    def add_component(self, component: Any) -> 'Entity':
+        """Add one component (fluent)."""
         comp_type = type(component)
-        if comp_type not in self.components:
-            self.components.append(comp_type)
+        self.components.add(comp_type)
         self.components_dict[comp_type] = component
         return self
 
-    def add_components(self, *components):
+    def add_components(self, *components: Any) -> 'Entity':
+        """Add multiple components at once (fluent)."""
         for c in components:
             self.add_component(c)
         return self
 
-    def get_component(self, component_type):
+    def get_component[T](self, component_type: Type[T]) -> Optional[T]:
+        """Get component by type or None."""
         return self.components_dict.get(component_type)
 
-    def has_component(self, component_type):
+    def has_component(self, component_type: Type) -> bool:
+        """Check if entity has component of given type."""
         return component_type in self.components_dict
 
     @property
@@ -42,6 +48,10 @@ class Entity:
     @property
     def render(self) -> Optional[Render]:
         return self.get_component(Render)
+
+    @property
+    def camera(self) -> Optional[Camera]:
+        return self.get_component(Camera)
 
     @property
     def script(self) -> Optional[Script]:
