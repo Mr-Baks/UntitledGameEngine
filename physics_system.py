@@ -1,95 +1,10 @@
-from collections import defaultdict
 from components import *
 from entity import *
 from event_system import *
+from system_manager import System
+from query_manager import QueryManager
 import numpy as np
 
-
-class CollisionGrid:
-    """Spatial hash grid for broad-phase collision detection."""
-    def __init__(self, cell_size: tuple[int, int] = (5, 5)):
-        self.cell_w, self.cell_h = cell_size
-        self.cells: dict[tuple[int, int], list[Entity]] = defaultdict(list)
-        self.entity_cells: dict[int, set[tuple[int, int]]] = {}
-
-    def _get_cell_keys(self, entity: Entity) -> list[tuple[int, int]]:
-        """Calculate all cell coordinates entity overlaps."""
-        c = entity.collider
-        t = entity.transform
-        if c is None or t is None:
-            return []
-
-        min_x = t.pos[0] - c.half_x
-        min_y = t.pos[1] - c.half_y
-        max_x = t.pos[0] + c.half_x
-        max_y = t.pos[1] + c.half_y
-
-        x1 = int(min_x // self.cell_w)
-        y1 = int(min_y // self.cell_h)
-        x2 = int(max_x // self.cell_w) + 1
-        y2 = int(max_y // self.cell_h) + 1
-
-        return [(x, y) for y in range(y1, y2) for x in range(x1, x2)]
-
-    def insert(self, entity: Entity) -> None:
-        """Add entity to all overlapping cells."""
-        eid = id(entity)
-        cells = set(self._get_cell_keys(entity))
-        self.entity_cells[eid] = cells
-        for cell in cells:
-            self.cells[cell].append(entity)
-
-    def remove(self, entity: Entity) -> None:
-        """Remove entity from all cells it was in."""
-        eid = id(entity)
-        cells = self.entity_cells.pop(eid, None)
-        if not cells:
-            return
-        for cell in cells:
-            bucket = self.cells.get(cell)
-            if bucket and entity in bucket:
-                bucket.remove(entity)
-            if not bucket:
-                del self.cells[cell]
-
-    def update(self, entity: Entity) -> None:
-        """Update entity's cell membership if position changed."""
-        eid = id(entity)
-        old_cells = self.entity_cells.get(eid, set())
-        new_cells = set(self._get_cell_keys(entity))
-
-        if old_cells == new_cells:
-            return  
-
-        for cell in old_cells - new_cells:
-            bucket = self.cells.get(cell)
-            if bucket and entity in bucket:
-                bucket.remove(entity)
-            if not bucket:
-                del self.cells[cell]
-
-        for cell in new_cells - old_cells:
-            self.cells[cell].append(entity)
-
-        self.entity_cells[eid] = new_cells
-
-    def get_nearby(self, entity: Entity) -> Set[Entity]:
-        """Return set of entities in neighboring cells (excludes self)."""
-        eid = id(entity)
-        cells = self.entity_cells.get(eid, ())
-        if not cells:
-            return set()
-
-        nearby = set()
-        for cx, cy in cells:
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    bucket = self.cells.get((cx + dx, cy + dy))
-                    if bucket:
-                        for e in bucket:
-                            if e is not entity:
-                                nearby.add(e)
-        return nearby
 
 class CollisionEvent(Event):
     """Detects and resolves collisions using spatial hash."""
@@ -98,105 +13,123 @@ class CollisionEvent(Event):
         self.e1 = e1
         self.e2 = e2
 
-class CollisionSystem:
-    """Detects and resolves collisions using spatial hash."""
-    def __init__(self, event_bus: EventBus, cell_size=(5, 5), elasticity: float = 0.8):
-        self.collision_grid = CollisionGrid(cell_size)
-        self.elasticity = elasticity
+class CollisionSystem(System):
+    """Performs broad-phase (spatial grid) + narrow-phase (AABB) collision detection and resolution."""
+
+    phase = Phase.REACTION
+    priority = 1000 
+    required_components = frozenset([Transform, Collider])
+    transformer = None
+
+    def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
+        self._query_manager: QueryManager = None
 
-    def process_collision(self, entities: list[Entity]) -> None:
-        """Detect overlaps and resolve collisions for given entities using provided grid."""
-        processed_pairs = set()
+    def _AABB_intersects(self, e1: Entity, e2: Entity) -> bool:
+        """Check if two entities' AABBs are overlapping (narrow-phase test)."""
+        t1, c1 = e1.transform, e1.collider
+        t2, c2 = e2.transform, e2.collider
+        dx = abs(t1.pos[0] - t2.pos[0])
+        dy = abs(t1.pos[1] - t2.pos[1])
+        return dx < (c1.half_x + c2.half_x) and dy < (c1.half_y + c2.half_y)
+    
+    def _resolve_collision(self, e1: Entity, e2: Entity) -> None:
+        """Resolve penetration and apply impulse based on masses and elasticity."""
+        t1, p1, c1 = e1.transform, e1.physics, e1.collider
+        t2, p2, c2 = e2.transform, e2.physics, e2.collider
 
-        for e in entities:
-            if e.collider and e.collider.has_collision:
-                if hasattr(e, 'physics') and not e.physics.is_static:
-                    self.collision_grid.update(e)
-
-        for e1 in entities:
-            if not e1.collider or not e1.collider.has_collision:
-                continue
-
-            for e2 in self.collision_grid.get_nearby(e1):
-                if e2 is e1 or not e2.collider or not e2.collider.has_collision:
-                    continue
-
-                id1, id2 = id(e1), id(e2)
-                pair = (id1, id2) if id1 < id2 else (id2, id1)
-                if pair in processed_pairs:
-                    continue
-
-                if self._aabb_intersect(e1, e2):
-                    processed_pairs.add(pair)
-                    self.resolve_collision(e1, e2)
-                    self.event_bus.emit(Phase.REACTION, CollisionEvent(e1, e2))
-
-    @staticmethod
-    def _aabb_intersect(a: Entity, b: Entity) -> bool:
-        """Check if two AABBs overlap (centers at transform.pos)."""
-        dx = abs(a.transform.pos[0] - b.transform.pos[0])
-        dy = abs(a.transform.pos[1] - b.transform.pos[1])
-        return (dx < (a.collider.half_x + b.collider.half_x) and
-                dy < (a.collider.half_y + b.collider.half_y))
-
-    def resolve_collision(self, e1: Entity, e2: Entity) -> None:
-        """Resolve penetration and apply impulse for two colliding entities."""
-        pos1 = e1.transform.pos
-        pos2 = e2.transform.pos
-        c1 = e1.collider
-        c2 = e2.collider
-
-        dx = pos2[0] - pos1[0]
-        dy = pos2[1] - pos1[1]
-
-        overlap_x = (c1.half_x + c2.half_x) - abs(dx)
-        overlap_y = (c1.half_y + c2.half_y) - abs(dy)
-
-        if overlap_x <= 0 or overlap_y <= 0:
+        dx = t2.pos[0] - t1.pos[0]
+        dy = t2.pos[1] - t1.pos[1]
+        ox = c1.half_x + c2.half_x - abs(dx)
+        oy = c1.half_y + c2.half_y - abs(dy)
+        if ox <= 0 or oy <= 0:
             return
 
-        if overlap_x < overlap_y:
-            normal = np.array([1.0, 0.0]) if dx > 0 else np.array([-1.0, 0.0])
-            penetration = overlap_x
+        if ox < oy:
+            penetration = ox
+            normal = np.array([np.sign(dx) if dx != 0 else 0.0, 0.0], dtype=np.float32)
         else:
-            normal = np.array([0.0, 1.0]) if dy > 0 else np.array([0.0, -1.0])
-            penetration = overlap_y
+            penetration = oy
+            normal = np.array([0.0, np.sign(dy) if dy != 0 else 0.0], dtype=np.float32)
+        if np.all(normal == 0):
+            normal = np.array([1.0, 0.0])
 
-        total_mass = e1.physics.mass + e2.physics.mass
-        correction = (normal * penetration * 1.1) / total_mass
+        e = min(c1.elasticity, c2.elasticity)
 
-        rel_vel = e1.physics.velocity - e2.physics.velocity
-        vel_along_normal = np.dot(rel_vel, normal)
-        if vel_along_normal < 0:
-            return
-
-        impulse_scalar = (-(1 + (e1.collider.elasticity + e2.collider.elasticity) / 2) * vel_along_normal)
-        impulse_scalar /= (1 / e1.physics.mass + 1 / e2.physics.mass)
-
-        impulse = impulse_scalar * normal
-        e1.physics.velocity += impulse / e1.physics.mass
-        e2.physics.velocity -= impulse / e2.physics.mass
-
-        if e1.physics.is_static:
-            e1.transform.pos -= 0 
-            e2.transform.pos += correction / total_mass
-        elif e2.physics.is_static:
-            e1.transform.pos -= correction / total_mass
-            e2.transform.pos += 0
+        if p1.is_static:
+            t2.pos += normal * penetration
+        elif p2.is_static:
+            t1.pos -= normal * penetration
         else:
-            e1.transform.pos -= correction / e2.physics.mass
-            e2.transform.pos += correction / e1.physics.mass
+            inv_m1 = 1.0 / p1.mass if p1.mass > 0 else 0.0
+            inv_m2 = 1.0 / p2.mass if p2.mass > 0 else 0.0
+            total = inv_m1 + inv_m2
+            if total > 0:
+                c1_ = penetration * (inv_m1 / total)
+                c2_ = penetration * (inv_m2 / total)
+                t1.pos -= normal * c1_
+                t2.pos += normal * c2_
 
+        v_rel = p2.velocity - p1.velocity
+        v_rel_n = np.dot(v_rel, normal)
+        if v_rel_n >= 0: return
 
+        inv_m1 = 0.0 if p1.is_static else 1.0 / max(p1.mass, 1e-6)
+        inv_m2 = 0.0 if p2.is_static else 1.0 / max(p2.mass, 1e-6)
+        total_inv = inv_m1 + inv_m2
+        if total_inv > 0:
+            j = -(1 + e) * v_rel_n / total_inv
+            p1.velocity -= j * normal * inv_m1
+            p2.velocity += j * normal * inv_m2
+
+    def update(self, _) -> None:
+        """Update spatial grid for moved entities and resolve all active collisions."""
+        for world in self._query_manager.scene_manager.active_worlds:
+
+            entities = list(world._get_with(Transform, Collider, Physics))
         
-class PhysicsSystem:
+            for e in entities:
+                if e.transform.dirty and not e.physics.is_static:
+                    world.collision_grid.update(e)
+
+            checked = set()
+            resolve_count = 0
+
+            for i, e1 in enumerate(entities):
+                if not e1.collider.has_collision:
+                    continue
+                
+                potentials = world.collision_grid.get_potential(e1)
+
+                for e2 in potentials:
+                    if e2.id <= e1.id:
+                        continue
+                
+                    pair = (e1.id, e2.id)
+                    if pair in checked:
+                        continue
+                    checked.add(pair)
+
+                    if self._AABB_intersects(e1, e2):
+                        self._resolve_collision(e1, e2)
+                        self.event_bus.emit(Phase.REACTION, CollisionEvent(e1, e2))
+                        resolve_count += 1
+
+class PhysicsSystem(System):
+    phase = Phase.SIMULATION 
+    priority = 1000
+    required_components = frozenset([Transform, Physics])
+    transformer = None
+
     def __init__(self, y_scale: float = 0.5):
         self.y_scale_vec = np.array((1, y_scale), dtype=np.float32)
+        self._query_manager: QueryManager = None
 
-    def update(self, entities: list[Entity], delta_time: float) -> None: 
+    def update(self, delta_time: float) -> None: 
         """Update position and velocity for all non-static entities."""
         dt = np.float32(delta_time) 
+        entities = self._query_manager.get_global(*self.required_components)
+        
         for e in entities: 
             p = e.physics
             t = e.transform

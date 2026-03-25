@@ -1,16 +1,21 @@
 from dataclasses import dataclass
 import numpy as np
 from typing import Callable, List
+from abc import ABC
 
+
+@dataclass 
+class Component(ABC):
+    pass
 
 @dataclass
-class Transform:
+class Transform(Component):
     """Entity position in world coordinates."""
     pos: np.ndarray 
     dirty: bool = True
 
 @dataclass
-class Physics:
+class Physics(Component):
     """Physical properties and motion state of an entity."""
     mass: np.float32
     velocity: np.ndarray  
@@ -19,16 +24,16 @@ class Physics:
     is_static: bool = False
 
 @dataclass
-class Collider:
+class Collider(Component):
     """Axis-aligned bounding box used for collision detection.
     Center is at Transform.pos."""
     half_x: float = 0.5
     half_y: float = 0.5
     has_collision: bool = True
-    elasticity: float = 0.0
+    elasticity: float = 0.8
 
 @dataclass
-class Render:
+class Render(Component):
     """Visual representation properties of an entity."""
     is_visible: bool = True
     draw_priority: int = 0
@@ -39,7 +44,7 @@ class Render:
     screen_y: int = 0
 
 @dataclass
-class Camera:
+class Camera(Component):
     """Camera properties attached to an entity."""
     offset: np.ndarray  
     zoom: float = 1.0
@@ -65,3 +70,4 @@ class Script:
             callback: Function(entity: Entity, game: Game) -> None"""
         self.on_frame.append(callback)
         return self
+

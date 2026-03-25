@@ -3,10 +3,11 @@ from components import *
 from render_systems import *
 from physics_system import *
 from event_system import *
+from query_manager import QueryManager
+from system_manager import SystemManager
 import keyboard
 import time
 from typing import Optional, Callable
-import threading
 
 
 class Input:
@@ -120,10 +121,18 @@ class Game:
 
         self.event_bus = EventBus()
         self.input = Input()
-        self.physics_system = PhysicsSystem()
-        self.collision_system = CollisionSystem(self.event_bus, cell_size=(5, 5), elasticity=elasticity)
-        self.scene_manager = SceneManager(collision_grid=self.collision_system.collision_grid)
+        self.scene_manager = SceneManager()
+        self.query_manager = QueryManager(self.scene_manager)
+        self.scene_manager.query_manager = self.query_manager
+        self.system_manager = SystemManager(self.query_manager)
+
+        self.collision_system = CollisionSystem(self.event_bus)
         self.render_system = RenderSystem(resolution, self.scene_manager, bucket_step=bucket_step, background_sym=background_sym, textures_path=textures_path)
+        self.physics_system = PhysicsSystem()
+
+        self.system_manager.register(self.physics_system, Phase.SIMULATION)
+        self.system_manager.register(self.collision_system, Phase.REACTION)
+        self.system_manager.register(self.render_system, Phase.RENDER)
 
     def set_player(self, entity: Entity):
         """Set given entity as the player-controlled character.
@@ -150,6 +159,7 @@ class Game:
         render = self.render_system
         input_sys = self.input
 
+
         while self.is_running:
             now = time.time()
             dt = now - last_time
@@ -160,26 +170,25 @@ class Game:
 
             while accumulator >= fixed_dt:
                 self.tick += 1
-                physics.update(scene_manager.physics_entities, fixed_dt)
-                collision.process_collision(scene_manager.collidables)
+                self.system_manager.update_phase(Phase.SIMULATION, dt)
+                self.system_manager.update_phase(Phase.REACTION, dt)
                 accumulator -= fixed_dt
 
-                for e in scene_manager.get_with(Script):
+                for e in self.query_manager.get_global(Script):
                     for cb in e.script.on_tick:
                         cb(e, self)
 
-            for e in scene_manager.get_with(Script):
+            for e in self.query_manager.get_global(Script):
                 for cb in e.script.on_frame:
                     cb(e, self)
             
             self.frame += 1
 
-            render.render()
-            print(render.compose())
+            self.system_manager.update_phase(Phase.RENDER, dt)
 
             self._limit_fps(now)
 
-            for phase in range(0, 4):
+            for phase in Phase:
                 event_bus.dispatch(phase)
 
     def _limit_fps(self, current_time):

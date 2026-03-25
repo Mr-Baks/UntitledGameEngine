@@ -1,134 +1,27 @@
 from components import *
 from entity import Entity
-from typing import Optional
+from typing import Optional, Type, Callable, Any
 import json
 from enum import Enum
 from copy import copy
 from event_system import Event, EventBus, Phase
-from copy import copy
+from query_manager import World, QueryManager
+from system_manager import System
         
-
-class EntityTypes(Enum):
-    """Predefined entity query types for caching."""
-    renderable = 1
-    collidable = 2
-    physics = 3
-    camera = 4
-
-class World:
-    """Container for all entities and pre-filtered entity lists for systems."""
-
-    __slots__ = ('entities', 'renderables', 'collidables', 'physics_entities', 'camera_entity', 'component_index', '_scene_manager')
-
-    def __init__(self):
-        """Initialize entity storage and system-specific entity lists."""
-        self.entities = set()
-        self.renderables = set()
-        self.collidables = set()
-        self.physics_entities = set()
-        self.camera_entity = None
-
-        self.component_index = {}
-        self._scene_manager: SceneManager = None
-
-    def _add_entity(self, entity: Entity) -> None:
-        """Add entity to world and update all relevant caches and grids."""
-        self.entities.add(entity)
-
-        cache_dirty = self._scene_manager.query_cache_dirty
-        index = self.component_index
-
-        for c in entity.components:
-            if index.get(c) is None: index[c] = {entity}
-            else: index[c].add(entity)
-
-            cache_dirty[c] = True
-
-        if entity.transform is not None:
-            if entity.collider is not None:
-                if index.get(EntityTypes.collidable) is None: index[EntityTypes.collidable] = {entity}
-                else: index[EntityTypes.collidable].add(entity)
-                cache_dirty[EntityTypes.collidable] = True
-                self._scene_manager.collision_grid.insert(entity)
-                self.collidables.add(entity)
-
-            if entity.render is not None:
-                if index.get(EntityTypes.renderable) is None: index[EntityTypes.renderable] = {entity}
-                else: index[EntityTypes.renderable].add(entity)
-                cache_dirty[EntityTypes.renderable] = True
-                self.renderables.add(entity)
-
-            if entity.physics is not None:
-                if index.get(EntityTypes.physics) is None: index[EntityTypes.physics] = {entity}
-                else: index[EntityTypes.physics].add(entity)
-                cache_dirty[EntityTypes.physics] = True
-                self.physics_entities.add(entity)
-
-            if entity.camera is not None: self.camera_entity = entity
-
-    def _get_entity(self, id: int) -> Optional[Entity]:
-        """Return entity by id or None if not found."""
-        for e in self.entities:
-            if e.id == id:
-                return e
-        return None
-
-    def _remove_entity(self, id: int) -> Optional[Entity]:
-        """Remove entity from world and all caches/grids."""
-        removed = self._get_entity(id)
-        cache_dirty = self._scene_manager.query_cache_dirty
-
-        if removed is None:
-            return None
-
-        self.entities.remove(removed)
-        
-        if removed in self.renderables:
-            self.renderables.remove(removed)
-            cache_dirty[EntityTypes.renderable] = True
-
-        if removed in self.collidables:
-            self.collidables.remove(removed)
-            self._scene_manager.collision_grid.remove(removed)
-            cache_dirty[EntityTypes.collidable] = True
-
-        if removed in self.physics_entities:
-            self.physics_entities.remove(removed)
-            cache_dirty[EntityTypes.physics] = True
-
-        if removed is self.camera_entity:
-            self.camera_entity = None
-
-        return removed
-
-    def _get_with(self, *component_types) -> set:
-        """Return entities that have all specified component types."""
-        if not component_types:
-            return self.entities
-
-        sets = []
-        for t in component_types:
-            if t not in self.component_index:
-                return set()
-            sets.append(self.component_index[t])
-
-        sets.sort(key=len)
-
-        result = sets[0].copy()
-        for s in sets[1:]:
-            result &= s
-
-        return result
 
 class Scene:
     """Single scene containing its own isolated world and lifecycle hooks."""
 
-    __slots__ = ('name', 'priority', 'world', 'on_load', 'on_unload', 'on_pause', 'on_resume', 'paused', 'active')
+    __slots__ = (
+        'name', 'priority', 'world', 'on_load', 'on_unload', 'on_pause', 'on_resume', 'paused', 'active', '_scene_manager', '_pending_entities')
 
-    def __init__(self, name: str, priority: int = 0):
+    def __init__(self, name: str, priority: int = 0, cell_size: tuple[float, float] = (5, 5)):
         self.name = name
         self.priority = priority
-        self.world = World()
+        self.world = World(cell_size=cell_size)
+
+        self._scene_manager: Optional[SceneManager] = None
+        self._pending_entities: List[Entity] = []
 
         self.on_load = []
         self.on_unload = []
@@ -138,39 +31,104 @@ class Scene:
         self.paused = False
         self.active = False
 
+    def add(self, entity: Entity) -> Scene:
+        if self._scene_manager is not None:
+            self.world._add_entity(entity)
+            self._scene_manager.query_manager.on_entity_action(entity)
+            self._scene_manager.active_worlds.append(self.world)
+            self._scene_manager.scenes[self.name] = self
+        else:
+            self._pending_entities.append(entity)
+        
+        return self 
+
+    def remove(self, entity_id: int) -> Optional[Entity]:
+        removed = self.world._remove_entity(entity_id)
+
+        if removed is None:
+            for e in self._pending_entities:
+                if e.id == entity_id:
+                    self._pending_entities.remove(e)
+                    removed = e
+        else: 
+            self._scene_manager.scenes.pop(self.name)
+            self._scene_manager.active_worlds.remove(self.world)
+            self._scene_manager.query_manager.on_entity_action(entity)
+
+        return removed
+
+    def get_with(self, *component_types) -> set[Entity]:
+        """Return entities that have all specified component types."""
+        if not component_types:
+            return self.world.entities
+
+        sets = []
+        for t in component_types:
+            if t not in self.world.component_index:
+                return set()
+            sets.append(self.world.component_index[t])
+
+        sets.sort(key=len)
+
+        result = sets[0].copy()
+        for s in sets[1:]:
+            result &= s
+
+        return result
+
+    def _flush_pending(self) -> None:
+        if not self._pending_entities:
+            return
+
+        for entity in self._pending_entities:
+            self.world._add_entity(entity)
+            self._scene_manager.query_manager.on_entity_action(entity)
+
+        self._pending_entities.clear()
+        
 class SceneGroup:
     """Group of scenes rendered together, ordered by scene priority."""
 
-    __slots__ = ('name', 'priority', 'scenes')
+    __slots__ = ('name', 'priority', '_scene_manager', 'scenes_dirty', 'scenes')
 
     def __init__(self, name: str, priority: int = 0):
         self.name = name
         self.priority = priority
+        self._scene_manager = None
+        self.scenes_dirty = True
         self.scenes = []
 
-    def add(self, scene: Scene):
+    def add(self, scene: Scene) -> self:
         """Add a scene and keep scenes sorted by priority."""
         self.scenes.append(scene)
-        self.scenes.sort(key=lambda s: s.priority)
+        self.scenes_dirty = True
+
+        if self._scene_manager is not None:
+            scene._scene_manager = self._scene_manager
+            scene._flush_pending()
+        
         return self
 
-    def get(self, name: str) -> Optional[Scene]:
-        """Find scene by name."""
+    def get(self, name: Optional[str]) -> Optional[Scene]:
+        """Get scene by name."""
+        if self.scenes_dirty:
+            self.scenes.sort(key=lambda s: -s.priority)
+            if self._scene_manager is not None:
+                for s in self.scenes:
+                    s._scene_manager = self._scene_manager
+        
+        if name is None: return self.scenes
+
         for s in self.scenes:
             if name == s.name: return s
 
-    def remove(self, name: str):
+    def remove(self, name: str) -> Optional[Scene]:
         """Remove a scene by name and return remaining scenes."""
-        removed_scene = None
-        removed_scenes = []
+        removed = self.get(name)
+        self.scenes.remove(removed)
+        self.scenes_dirty = True
 
-        for s in self.scenes:
-            if s.name == name:
-                removed_scene = s
-            else:
-                removed_scenes.append(s)
-
-        return removed_scenes
+        return removed
 
     def load(self, game):
         """Activate all scenes and call on_load callbacks."""
@@ -209,29 +167,24 @@ class SceneGroup:
 class SceneManager:
     """Manages scene groups, active worlds and entity queries across scenes."""
 
-    def __init__(self, collision_grid: 'CollisionGrid'):
-        self.collision_grid = collision_grid
+    def __init__(self):
         self.levels = {}
-        self.stack = []
-
-        self.query_registry = {
-            EntityTypes.renderable: ("transform", "render"),
-            EntityTypes.collidable: ("transform", "collider"),
-            EntityTypes.physics: ("transform", "physics"),
-            EntityTypes.camera: ("transform", "camera"),
-        }
-        self.query_cache = {q: [] for q in EntityTypes}
-        self.query_cache_dirty = {q: True for q in EntityTypes}
-
         self.active_worlds = []
+        self.scenes: dict[str, Scene] = {}
+
+        self.stack = []
         self.stack_dirty = True
 
-        self.main_camera = None
-        self.entities = set()
+        self.query_manager = None
 
     def register(self, group: SceneGroup) -> self:
         """Register scene group."""
         self.levels[group.name] = group
+
+        for scene in group.scenes:
+            scene._scene_manager = self
+            scene._flush_pending()
+        
         return self
 
     def load(self, name: str, game: Optional[Any] = None) -> None:
@@ -247,8 +200,10 @@ class SceneManager:
 
         self.stack_dirty = True
 
-        for q in self.query_cache_dirty:
-            self.query_cache_dirty[q] = True
+        for scene.world in self.active_worlds:
+            scene._flush_pending()
+        
+        self.query_manager.clear()
 
     def push(self, name, game=None):
         if self.stack:
@@ -261,9 +216,6 @@ class SceneManager:
 
         self.stack_dirty = True
 
-        for q in self.query_cache_dirty:
-            self.query_cache_dirty[q] = True
-
     def pop(self, game=None):
         if not self.stack:
             return
@@ -275,140 +227,23 @@ class SceneManager:
             self.stack[-1].resume(game)
 
         self.stack_dirty = True
-
-        for q in self.query_cache_dirty:
-            self.query_cache_dirty[q] = True
-
-    def add_entity(self, scene: Scene, entity: Entity) -> self:
-        """Add entity to scene's world."""
-        world = scene.world
-
-        world._scene_manager = self
-        world._add_entity(entity)
-
-        if entity.render:
-            self.query_cache_dirty[EntityTypes.renderable] = True
-
-        if entity.collider:
-            self.query_cache_dirty[EntityTypes.collidable] = True
-
-        if entity.physics:
-            self.query_cache_dirty[EntityTypes.physics] = True
-
-        if entity.camera:
-            self.query_cache_dirty[EntityTypes.camera] = True
-
-            if scene.active and not scene.paused:
-                self.main_camera = entity
-        self.entities.add(entity)
-
-        return self
-
-    def remove_entity(self, entity_id: int) -> Optional[Entity]:
-        """Remove entity by id."""
-        world = scene.world
-        removed = world._remove_entity(entity.id)
-
-        if not removed:
-            return None
-
-        if removed.render:
-            self.query_cache_dirty[EntityTypes.renderable] = True
-
-        if removed.collider:
-            self.query_cache_dirty[EntityTypes.collidable] = True
-
-        if removed.physics:
-            self.query_cache_dirty[EntityTypes.physics] = True
-
-        if removed.camera:
-            self.query_cache_dirty[EntityTypes.camera] = True
-
-            if removed is self.main_camera:
-                self.main_camera = None
-        self.entities.remove(entity)
-
-        return removed
-
-    def get_by_id(self, id: int) -> Entity:
-        """Get entity by id"""
-        for e in self.entities:
-            if e.id == id: return e
-        return None
+            
+    def get(self, scene_name: str) -> [Optional[Scene]]:
+        return self.scenes.get(scene_name)
 
     def _rebuild_active_worlds(self):
         worlds = []
+        scenes = {}
 
         for group in self.stack:
             for scene in group.scenes:
                 if scene.active and not scene.paused:
                     worlds.append(scene.world)
+                    self.scenes[scene.name] = scene
 
         self.active_worlds = worlds
+        self.scenes = scenes
         self.stack_dirty = False
-
-    def get(self, query_type) -> set[Entity]:
-        """Get entities with specified component"""
-        if query_type not in self.query_cache: return set()
-        if self.stack_dirty:
-            self._rebuild_active_worlds()
-
-        if self.query_cache_dirty[query_type]:
-            self._rebuild_query(query_type)
-
-        return self.query_cache[query_type]
-
-    def _rebuild_query(self, query_type):
-        result = []
-        worlds = self.active_worlds
-
-        if query_type == EntityTypes.renderable:
-            for world in worlds:
-                result.extend(world.renderables)
-            result.sort(key=lambda e: -e.render.draw_priority)
-
-        elif query_type == EntityTypes.camera:
-            for world in worlds:
-                cam = world.camera_entity
-                if cam:
-                    self.main_camera = cam
-                    result.append(cam)
-                    break
-        else:
-            for world in worlds:
-                result.extend(set(world.component_index.get(query_type, ())))
-
-        self.query_cache[query_type] = result
-        self.query_cache_dirty[query_type] = False
-
-    def get_with(self, *component_types: type) -> Set[Entity]:
-        """Get entities with all specified components (union over active worlds)."""
-        result = set()
-
-        if self.stack_dirty: self._rebuild_active_worlds()
-        for world in self.active_worlds:
-            result |= world._get_with(*component_types)
-
-        return result
-
-    @property
-    def renderables(self) -> set[Entity]:
-        return self.get(EntityTypes.renderable)
-
-    @property
-    def collidables(self) -> set[Entity]:
-        return self.get(EntityTypes.collidable)
-
-    @property
-    def physics_entities(self) -> set[Entity]:
-        return self.get(EntityTypes.physics)
-
-    @property
-    def camera(self) -> Entity:
-        if self.query_cache_dirty[EntityTypes.camera]:
-            self._rebuild_query(EntityTypes.camera)
-
-        return self.main_camera
 
 class Texture:
     """Immutable texture data container."""
@@ -492,8 +327,8 @@ class TextureManager:
         if entity.collider is None:
             w, h = (1, 1)
         else:
-            w = int(entity.collider.half_x * 2)
-            h = int(entity.collider.half_y * 2)
+            w = max(1, round(entity.collider.half_x * 2))
+            h = max(1, round(entity.collider.half_y * 2))
         sym = entity.render.default_sym
 
         name = f'auto_{w}x{h}_{sym}'
@@ -511,14 +346,23 @@ class TextureManager:
         bbox = self.bbox_cache[entity.render.name]
         return (int(bbox[0] * zoom), int(bbox[1] * zoom))
 
-class RenderSystem:
-    def __init__(self, resolution: tuple[int], scene_manager: SceneManager, background_sym: str = ' ', textures_path: str = 'textures.json', bucket_step: float = 0.25):
+def render_sort(_, ents):
+    return sorted(ents, key=lambda e: e.render.draw_priority)
+
+class RenderSystem(System):
+    phase = Phase.RENDER
+    priority = 1000
+    required_components = frozenset([Transform, Render])
+    transformer = render_sort
+    
+    def __init__(self, resolution: tuple[int], scene_manager: SceneManager, background_sym: str = '.', textures_path: str = 'textures.json', bucket_step: float = 0.25):
+
         self.w, self.h = resolution
         self.stride = self.w + 1
         self.size = self.stride * self.h
 
-        self.renderables = set()
-        self.visibles = set()
+        self.renderables = []
+        self.visibles = []
         self.last_visibles_states = {}
         self.background_sym = background_sym
         self.bg_byte = ord(background_sym)
@@ -535,6 +379,7 @@ class RenderSystem:
         self.full_redraw = True
 
         self.scene_manager = scene_manager
+        self._query_manager: QueryManager = None
         self.texture_manager = TextureManager(bucket_step=bucket_step)
         self.texture_manager.load(path=textures_path)
 
@@ -578,7 +423,7 @@ class RenderSystem:
 
         return left, right, bottom, top
 
-    def collect_visibles(self, renderables: list[Entity], cam_x: int, cam_y: int) -> set[Entity]:
+    def collect_visibles(self, renderables: list[Entity], cam_x: int, cam_y: int) -> list[Entity]:
         """Collect entities visible in current camera frustum."""
         self.visibles.clear()
 
@@ -603,7 +448,7 @@ class RenderSystem:
             if right < cam_rect[0] or left > cam_rect[1] or top < cam_rect[2] or bottom > cam_rect[3]:
                 continue
 
-            self.visibles.add(e)
+            self.visibles.append(e)
 
         return self.visibles
 
@@ -614,8 +459,8 @@ class RenderSystem:
         tex = self.texture_manager.get(entity, self.main_camera.camera.zoom)
 
         if t.dirty or self.camera_dirty:
-            r.screen_x = round(t.pos[0] - cam_x + (self.w - tex.w) / 2)
-            r.screen_y = round(t.pos[1] - cam_y + (self.h - tex.h) / 2)
+            r.screen_x = round((t.pos[0] - cam_x) * self.main_camera.camera.zoom + (self.w - tex.w) / 2)
+            r.screen_y = round((t.pos[1] - cam_y) * self.main_camera.camera.zoom + (self.h - tex.h) / 2)
 
         for y, row in enumerate(tex.pixels):
             sy = r.screen_y + y
@@ -631,7 +476,7 @@ class RenderSystem:
         if self.main_camera is None:
             return self.front
 
-        self.renderables = self.scene_manager.renderables
+        self.renderables = self._query_manager.get_transformed(Transform, Render)
 
         cam_pos = self.main_camera.camera.offset + self.main_camera.transform.pos
         cam_x = int(cam_pos[0])
@@ -644,6 +489,7 @@ class RenderSystem:
 
         if self.scene_manager.stack_dirty:
             self.full_redraw = True
+            self.scene_manager._rebuild_active_worlds
             self.scene_manager.stack_dirty = False
 
         self.collect_visibles(self.renderables, cam_x, cam_y)
@@ -664,12 +510,17 @@ class RenderSystem:
             self.camera_dirty = False
             self.full_redraw = False
         self.front[:] = self.back
+        print(self.bg_byte)
 
         return self.back
 
     def compose(self) -> str:
         """Convert current back buffer to printable string (for console output)."""
         return self.back.decode('ascii', errors='ignore')
+
+    def update(self, _):
+        self.render()
+        print(self.compose())
 
 class ConsolePresenter:
     def __init__(self, renderer: RenderSystem):
@@ -679,3 +530,4 @@ class ConsolePresenter:
     def present(self):
         sys.stdout.buffer.write(self.renderer.back)
         sys.stdout.buffer.flush()
+

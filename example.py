@@ -1,83 +1,70 @@
-from game import *
+from game import Game
+from entity import Entity
+from components import *
+from render_systems import Scene, SceneGroup
+import numpy as np
 
+game = Game(
+    resolution = (100, 30),     # ширина × высота в символах
+    fps        = 1,
+    tickspeed  = 120,           # частота физики (обычно выше fps)
+    background_sym = '.',
+    textures_path = 'textures.json'
+)
 
-id_count = 0
-def get_id():
-    global id_count
-    id_count += 1
-    return id_count
+# === Создаём игрока с правильными float32 ===
+player = Entity(id=1).add_components(
+    Transform(pos=np.array([0, 0], dtype=np.float32)),
+    Physics(
+        mass=np.float32(1.0),
+        velocity=np.zeros(2, dtype=np.float32) + 1,
+        acceleration=np.zeros(2, dtype=np.float32),
+        velocity_limit=np.float32(15.0)
+    ),
+    Collider(half_x=4, half_y=7, elasticity=0.7),
+    Render(default_sym='A', draw_priority=10, is_visible=True),
+    Camera(offset=np.array([0., 0.], dtype=np.float32), zoom=1.0, active=True)
+)
 
-npa = lambda *z: np.array(z, dtype=np.float32)
+# === Скрипт управления ===
+def player_controller(entity: Entity, game: Game):
+    physics = entity.physics
+    if physics is None:
+        return
 
-def debug(e: Entity, g: Game):
-    print(e.physics.velocity)
+    accel = 25.0          # сила ускорения (настраивается легко)
+    friction = 0.85       # трение/торможение при отсутствии ввода
 
-def spawn_platform(x, y, w, h, game: Game, scene: Scene):
-    e = Entity(get_id()).add_components(Transform(npa(x, y)), Render(), Collider(w / 2, h / 2), Physics(np.float32(100000), npa(0, 0), npa(0, 0), is_static=True))
-    game.scene_manager.add_entity(scene, e)
+    input_accel = np.zeros(2, dtype=np.float32)
 
-def spawn_player(x, y, game: Game, scene: Scene):
-    e = Entity(get_id()).add_components(Transform(npa(x, y)), Render(name='player'), Collider(6, 1.5), Physics(np.float32(20), npa(0, 0), npa(0, 0)), Camera(npa(0, 0)), Script().add_frame(debug))
-    game.scene_manager.add_entity(scene, e)
-    return e
+    if game.input.is_pressed('a'):
+        input_accel[0] -= accel
+    if game.input.is_pressed('d'):
+        input_accel[0] += accel
+    if game.input.is_pressed('w'):
+        input_accel[1] -= accel
+    if game.input.is_pressed('s'):
+        input_accel[1] += accel
 
-g = Game((120, 20), 20, 40, background_sym=' ')
+    # Применяем управляющую силу
+    physics.acceleration = input_accel
 
-sg = SceneGroup('main')
-s = Scene('main')
-s2 = Scene('not_main')
-sg.add(s).add(s2)
+    # Простое трение, когда нет нажатия (чтобы игрок не скользил вечно)
+    if np.all(input_accel == 0):
+        physics.velocity *= friction
 
-g.scene_manager.register(sg)
-g.scene_manager.load('main')
+player.add_component(Script().add_tick(player_controller))
 
-spawn_platform(20, 0, 10, 3, g, s2)
-spawn_platform(0, 10, 1000, 3, g, s2)
+# === Полный цикл сцен (обязательно, потому что QueryManager и RenderSystem работают только через active_worlds) ===
+main_scene = Scene("main_level", priority=10, cell_size=(5, 5))
 
-player = spawn_player(0, 0, g, s)
-g.set_player(player)
+level_group = SceneGroup("level1", priority=0)
+level_group.add(main_scene)                # группы позволяют stacking (меню поверх уровня и т.д.)
 
-def move_r_p():
-    player.physics.velocity += npa(15, 0)
+game.scene_manager.register(level_group)   # подключает сцены к менеджеру, flush_pending и т.д.
+game.scene_manager.load("level1", game)    # активирует, вызывает on_load, rebuild_active_worlds
 
-def move_r_r():
-    player.physics.velocity -= npa(15, 0)
+main_scene.add(player)                     # добавляем в world + уведомляем query_manager
+game.set_player(player)                    # привязывает камеру к RenderSystem
 
-def move_l_p():
-    player.physics.velocity += npa(-15, 0)
-
-def move_l_r():
-    player.physics.velocity -= npa(-15, 0)
-
-def move_u_p():
-    player.physics.velocity += npa(0, -15)
-
-def move_u_r():
-    player.physics.velocity -= npa(0, -15)
-
-def move_d_p():
-    player.physics.velocity += npa(0, 15)
-
-def move_d_r():
-    player.physics.velocity -= npa(0, 15)
-
-def reset():
-    player.physics.velocity *= 0
-
-def zoom_plus():
-    g.player.camera.zoom *= 1.1
-
-def zoom_minus():
-    g.player.camera.zoom /= 1.1
-
-g.input.bind_key('d', on_press=move_r_p, on_release=move_r_r)
-g.input.bind_key('a', on_press=move_l_p, on_release=move_l_r)
-g.input.bind_key('w', on_press=move_u_p, on_release=move_u_r)
-g.input.bind_key('s', on_press=move_d_p, on_release=move_d_r)
-g.input.bind_key('z', on_press=zoom_plus)
-g.input.bind_key('x', on_press=zoom_minus)
-g.input.bind_key('r', on_press=reset)
-
-g.render_system.main_camera.camera.zoom = 1
-
-g.run()
+game.run()

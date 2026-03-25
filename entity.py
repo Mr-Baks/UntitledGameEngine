@@ -1,5 +1,5 @@
 from typing import Set, Dict, Type, Any, Optional
-from components import Transform, Physics, Collider, Render, Camera, Script
+from components import *
 
 
 class Entity:
