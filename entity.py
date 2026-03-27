@@ -5,6 +5,7 @@ from components import *
 ID = 0
 
 def get_next_id():
+    global ID
     ID += 1
     return ID
 

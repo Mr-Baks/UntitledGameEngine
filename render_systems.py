@@ -12,7 +12,7 @@ from system_manager import System
 class Scene:
     """Single scene containing its own isolated world and lifecycle hooks."""
 
-    __slots__ = ('name', 'priority', 'world', 'on_load', 'on_unload', 'on_pause', 'on_resume', 'paused', 'active', '_scene_manager', '_pending_entities')
+    __slots__ = ('name', 'priority', 'world', 'on_load', 'on_unload', 'on_pause', 'on_resume', 'paused', 'active', '_scene_manager', 'entities', '_pending_entities')
 
     def __init__(self, name: str, priority: int = 0, cell_size: tuple[float, float] = (5, 5)):
         self.name = name
