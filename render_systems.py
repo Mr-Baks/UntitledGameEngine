@@ -12,13 +12,13 @@ from system_manager import System
 class Scene:
     """Single scene containing its own isolated world and lifecycle hooks."""
 
-    __slots__ = (
-        'name', 'priority', 'world', 'on_load', 'on_unload', 'on_pause', 'on_resume', 'paused', 'active', '_scene_manager', '_pending_entities')
+    __slots__ = ('name', 'priority', 'world', 'on_load', 'on_unload', 'on_pause', 'on_resume', 'paused', 'active', '_scene_manager', '_pending_entities')
 
     def __init__(self, name: str, priority: int = 0, cell_size: tuple[float, float] = (5, 5)):
         self.name = name
         self.priority = priority
         self.world = World(cell_size=cell_size)
+        self.entities: dict[str, Entity] = {}
 
         self._scene_manager: Optional[SceneManager] = None
         self._pending_entities: List[Entity] = []
@@ -39,6 +39,12 @@ class Scene:
             self._scene_manager.scenes[self.name] = self
         else:
             self._pending_entities.append(entity)
+
+        if entity.name is not None: 
+            if entity.name in self.entities:
+                self.entities[entity.name + f'__{entity.id}'] = entity
+            else:
+                self.entities[entity.name] = entity
         
         return self 
 
@@ -54,6 +60,8 @@ class Scene:
             self._scene_manager.scenes.pop(self.name)
             self._scene_manager.active_worlds.remove(self.world)
             self._scene_manager.query_manager.on_entity_action(entity)
+
+        if removed is not None: self.entities.pop(removed.name)
 
         return removed
 
@@ -75,6 +83,10 @@ class Scene:
             result &= s
 
         return result
+
+    def get(self, name: str) -> Optional[Entity]:
+        """Return entities with that name."""
+        return self.entities.get(name)
 
     def _flush_pending(self) -> None:
         if not self._pending_entities:

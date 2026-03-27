@@ -2,13 +2,20 @@ from typing import Set, Dict, Type, Any, Optional
 from components import *
 
 
+ID = 0
+
+def get_next_id():
+    ID += 1
+    return ID
+
 class Entity:
     """Basic ECS entity. ID + collection of components."""
 
-    __slots__ = ('id', 'components', 'components_dict')
+    __slots__ = ('id', 'components', 'name', 'components_dict')
 
-    def __init__(self, id: int):
-        self.id = id
+    def __init__(self, name: Optional[str] = None):
+        self.id = get_next_id()
+        self.name = name
         self.components: Set[Type] = set()
         self.components_dict: Dict[Type, Any] = {}
 
