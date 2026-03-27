@@ -13,7 +13,7 @@ game = Game(
 )
 
 # === Создаём игрока с правильными float32 ===
-player = Entity(id=1).add_components(
+player = Entity().add_components(
     Transform(pos=np.array([0, 0], dtype=np.float32)),
     Physics(
         mass=np.float32(1.0),
