@@ -190,8 +190,8 @@ class QueryManager:
                     self.transformed_dirty[k] = True
 
         if component_type is None:
-            for scene_dirty in self.scene_dirty.values():
-                scene_dirty = {k: True for k in scene_dirty}
+            for sn, scene_dirty in self.scene_dirty:
+                scene_dirty[sn] = {k: True for k in scene_dirty}
         else:
             if scene_name and scene_name in self.scene_dirty:
                 for k in list(self.scene_dirty[scene_name].keys()):

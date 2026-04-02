@@ -18,6 +18,36 @@ class System(ABC):
         """Main update method. dt is always passed, but some systems may ignore it"""
         pass
 
+class RenderSystem(System):
+    def __init__(self, phase: int, priority: int, required_components: frozenset[Component], compositor: Compositor, transformer: Optional[Callable] = None):
+        super().__init__(phase, priority, required_components, transformer=transformer)
+        self._compositor = compositor
+        self.w, self.h = compositor.w, compositor.h
+        self.bg_byte = compositor.bg_byte
+        self.stride = compositor.stride
+        self.size = compositor.size
+        self.buffer = bytearray(self.size)
+        self.update_mask = [False for _ in range(self.size)]
+
+    def put_sym(self, x: int, y: int, sym: str) -> None:
+        """Put single symbol at screen coordinates (clipped)."""
+        if not (0 <= y < self.h and 0 <= x < self.w):
+            return
+        if ord(sym) > 255:
+            sym = '#'
+        self.buffer[y * self.stride + x] = ord(sym)
+        self.buffer_dirty = True
+
+    def get_sym(self, x: int, y: int) -> str:
+        """Get symbol from back buffer at coordinates."""
+        return str(self.buffer[y * self.stride + x])
+
+    def clear(self) -> None:
+        """Fill back buffer with background symbol."""
+        self.buffer[:] = bytes([self.bg_byte]) * self.size
+        for y in range(self.h):
+            self.buffer[y * self.stride + self.w] = 10
+
 class SystemManager:
     """Manages registration, ordering and execution of all systems. Systems are grouped by phase and sorted by priority within each phase."""
     def __init__(self, query_manager: QueryManager, phases_count: int = 4):

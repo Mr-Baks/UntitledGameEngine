@@ -2,11 +2,13 @@ from components import *
 from entity import Entity
 from typing import Optional, Type, Callable, Any
 import json
+import sys
 from enum import Enum
+from abc import ABC, abstractmethod
 from copy import copy
 from event_system import Event, EventBus, Phase
 from query_manager import World, QueryManager
-from system_manager import System
+from system_manager import System, RenderSystem
         
 
 class Scene:
@@ -358,30 +360,49 @@ class TextureManager:
         bbox = self.bbox_cache[entity.render.name]
         return (int(bbox[0] * zoom), int(bbox[1] * zoom))
 
-def render_sort(_, ents):
-    return sorted(ents, key=lambda e: e.render.draw_priority)
+class Presenter(ABC):
+    @abstractmethod
+    def present(self, buffer: bytearray): pass
 
-class RenderSystem(System):
-    phase = Phase.RENDER
-    priority = 1000
-    required_components = frozenset([Transform, Render])
-    transformer = render_sort
-    
-    def __init__(self, resolution: tuple[int], scene_manager: SceneManager, background_sym: str = '.', textures_path: str = 'textures.json', bucket_step: float = 0.25):
+class ConsolePresenter(Presenter):
+    def present(self, buffer):
+        sys.stdout.buffer.write(buffer)
+        sys.stdout.buffer.flush()
 
+class Compositor:
+    def __init__(self, resolution: tuple[int, int], presenter: Presenter, bg_sym: str = ' '):
+        self.presenter = presenter
         self.w, self.h = resolution
+        self.bg_byte = ord(bg_sym)
         self.stride = self.w + 1
         self.size = self.stride * self.h
+        self.main_buffer = bytearray(self.size)
+        self._clear()
 
+    def _clear(self):
+        self.main_buffer[:] = bytes([self.bg_byte]) * self.size
+        for y in range(self.h):
+            self.main_buffer[y * self.stride + self.w] = 10 
+
+    def merge(self, buffer: bytearray, mask: list[bool]) -> None:
+        for i in range(self.size):
+            if mask[i]:
+                self.main_buffer[i] = buffer[i]
+
+    def present(self):
+        self.presenter.present(self.main_buffer)
+
+def render_sort(ents):
+    return sorted(ents, key=lambda e: e.render.draw_priority)
+
+class EntitiesRenderSystem(RenderSystem):
+    def __init__(self, compositor: Compositor, scene_manager: SceneManager, textures_path: str = 'textures.json', bucket_step: float = 0.25):
+        super().__init__(Phase.RENDER, 1000, frozenset([Transform, Render]), compositor, transformer=render_sort)
         self.renderables = []
         self.visibles = []
-        self.last_visibles_states = {}
-        self.background_sym = background_sym
-        self.bg_byte = ord(background_sym)
         
-        self.back = bytearray(self.size)
         self.front = bytearray(self.size)
-        self._clear()
+        self.clear()
 
         self.main_camera = None
         self.last_cam_state = None
@@ -391,6 +412,7 @@ class RenderSystem(System):
         self.full_redraw = True
 
         self.scene_manager = scene_manager
+        self.compositor = compositor
         self._query_manager: QueryManager = None
         self.texture_manager = TextureManager(bucket_step=bucket_step)
         self.texture_manager.load(path=textures_path)
@@ -400,24 +422,6 @@ class RenderSystem(System):
         if camera.camera is not None: 
             self.main_camera = camera
             self.scene_manager.main_camera = camera
-
-    def _clear(self) -> None:
-        """Fill back buffer with background symbol."""
-        self.back[:] = bytes([self.bg_byte]) * self.size
-        for y in range(self.h):
-            self.back[y * self.stride + self.w] = 10
-
-    def put_sym(self, x: int, y: int, sym: str) -> None:
-        """Put single symbol at screen coordinates (clipped)."""
-        if not (0 <= y < self.h and 0 <= x < self.w):
-            return
-        if ord(sym) > 255:
-            sym = '#'
-        self.back[y * self.stride + x] = ord(sym)
-
-    def get_sym(self, x: int, y: int) -> str:
-        """Get symbol from back buffer at coordinates."""
-        return str(self.back[y * self.stride + x])
 
     def _entity_aabb(self, entity: Entity) -> tuple[float, float, float, float]:
         """Calculate world-space AABB of entity's rendered texture."""
@@ -482,6 +486,9 @@ class RenderSystem(System):
                 if sx < 0 or sx >= self.w: continue
                 if sym != r.transparent_sym:
                     self.put_sym(sx, sy, sym)
+                    self.update_mask[sy * self.stride + sx] = True
+                else:
+                    self.update_mask[sy * self.stride + sx] = False
     
     def render(self) -> bytearray:
         """Perform rendering pass: collect visibles, draw to back buffer, return reference to it."""
@@ -501,7 +508,7 @@ class RenderSystem(System):
 
         if self.scene_manager.stack_dirty:
             self.full_redraw = True
-            self.scene_manager._rebuild_active_worlds
+            self.scene_manager._rebuild_active_worlds()
             self.scene_manager.stack_dirty = False
 
         self.collect_visibles(self.renderables, cam_x, cam_y)
@@ -514,32 +521,24 @@ class RenderSystem(System):
                     break
 
         if self.full_redraw:
-            self._clear()
+            self.clear()
 
             for e in self.visibles:
                 self._render_entity(e, cam_x, cam_y)
 
             self.camera_dirty = False
             self.full_redraw = False
-        self.front[:] = self.back
+        self.front[:] = self.buffer
         print(self.bg_byte)
 
-        return self.back
+        return self.buffer
 
     def compose(self) -> str:
         """Convert current back buffer to printable string (for console output)."""
-        return self.back.decode('ascii', errors='ignore')
+        return self.buffer.decode('ascii', errors='ignore')
 
     def update(self, _):
         self.render()
-        print(self.compose())
+        self._compositor.merge(self.buffer, self.update_mask)
 
-class ConsolePresenter:
-    def __init__(self, renderer: RenderSystem):
-        self.renderer = renderer
-        self._last_front = bytearray()
-
-    def present(self):
-        sys.stdout.buffer.write(self.renderer.back)
-        sys.stdout.buffer.flush()
 

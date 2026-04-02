@@ -112,8 +112,7 @@ class Game:
             textures_path: Path to JSON file containing named texture definitions.
         """
     
-    def __init__(self, resolution: tuple[int], fps: int, tickspeed: int, elasticity: float = 0.8, bucket_step: float = 0.25, background_sym: str = ' ', textures_path: str = 'textures.json'):
-        self.resolution = resolution
+    def __init__(self, resolution: tuple[int], fps: int, tickspeed: int, elasticity: float = 0.8, bucket_step: float = 0.25, background_sym: str = ' ', textures_path: str = 'textures.json', presenter: Presenter = ConsolePresenter()):
         self.fps = fps
         self.tickspeed = tickspeed
         self.tick = 0
@@ -121,13 +120,14 @@ class Game:
 
         self.event_bus = EventBus()
         self.input = Input()
+        self.compositor = Compositor(resolution, presenter, bg_sym=background_sym)
         self.scene_manager = SceneManager()
         self.query_manager = QueryManager(self.scene_manager)
         self.scene_manager.query_manager = self.query_manager
         self.system_manager = SystemManager(self.query_manager)
 
         self.collision_system = CollisionSystem(self.event_bus)
-        self.render_system = RenderSystem(resolution, self.scene_manager, bucket_step=bucket_step, background_sym=background_sym, textures_path=textures_path)
+        self.render_system = EntitiesRenderSystem(self.compositor, self.scene_manager, bucket_step=bucket_step, textures_path=textures_path)
         self.physics_system = PhysicsSystem()
 
         self.system_manager.register(self.physics_system, Phase.SIMULATION)
@@ -185,6 +185,7 @@ class Game:
             self.frame += 1
 
             self.system_manager.update_phase(Phase.RENDER, dt)
+            self.compositor.present()
 
             self._limit_fps(now)
 
