@@ -23,30 +23,53 @@ class RenderSystem(System):
         super().__init__(phase, priority, required_components, transformer=transformer)
         self._compositor = compositor
         self.w, self.h = compositor.w, compositor.h
-        self.bg_byte = compositor.bg_byte
-        self.stride = compositor.stride
-        self.size = compositor.size
-        self.buffer = bytearray(self.size)
-        self.update_mask = [False for _ in range(self.size)]
+        self.bg_sym = compositor.bg_sym
+        self.buffer = []
+        self.clear()
+        self.update_mask = [[False for _ in range(self.w)] for _ in range(self.h)]
 
     def put_sym(self, x: int, y: int, sym: str) -> None:
         """Put single symbol at screen coordinates (clipped)."""
         if not (0 <= y < self.h and 0 <= x < self.w):
             return
-        if ord(sym) > 255:
-            sym = '#'
-        self.buffer[y * self.stride + x] = ord(sym)
+        self.buffer[y][x] = sym
         self.buffer_dirty = True
 
     def get_sym(self, x: int, y: int) -> str:
         """Get symbol from back buffer at coordinates."""
-        return str(self.buffer[y * self.stride + x])
+        return self.buffer[y][x]
 
     def clear(self) -> None:
         """Fill back buffer with background symbol."""
-        self.buffer[:] = bytes([self.bg_byte]) * self.size
+        self.buffer = [[self.bg_sym for _ in range(self.w)] for _ in range(self.h)]
+        
+class Presenter(ABC):
+    @abstractmethod
+    def present(self, buffer: bytearray): pass
+
+class ConsolePresenter(Presenter):
+    def present(self, buffer):
+        print('\n'.join([''.join(line) for line in buffer]) + '\n')
+
+class Compositor:
+    def __init__(self, resolution: tuple[int, int], presenter: Presenter, bg_sym: str = ' '):
+        self.presenter = presenter
+        self.w, self.h = resolution
+        self.bg_sym = bg_sym
+        self.main_buffer: list[list[str]] = [[bg_sym for _ in range(self.w)] for _ in range(self.h)]
+        self._clear()
+
+    def _clear(self):
+        self.main_buffer = [[self.bg_sym for _ in range(self.w)] for _ in range(self.h)]
+
+    def merge(self, buffer: list[list[str]], mask: list[bool]) -> None:
         for y in range(self.h):
-            self.buffer[y * self.stride + self.w] = 10
+            for x in range(self.w):
+                if mask[y][x]:
+                    self.main_buffer[y][x] = buffer[y][x]
+
+    def present(self):
+        self.presenter.present(self.main_buffer)
 
 class SystemManager:
     """Manages registration, ordering and execution of all systems. Systems are grouped by phase and sorted by priority within each phase."""

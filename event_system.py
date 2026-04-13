@@ -49,13 +49,21 @@ class EventBus:
         Args:
             phase: Phase to clean subscriptions from
             id: Subscriber identifier to remove"""
+        phase_table = self.subscribers[phase]
+
+        for event_type, handlers in phase_table.items():
+            new_handlers = [h for h in handlers if h[1] != id]
+            if len(new_handlers) != len(handlers):
+                phase_table[event_type] = new_handlers
+                self.dirty[phase].add(event_type)
 
     def emit(self, phase: Phase, event: Event) -> None:
         """Queue an event for processing in the specified phase.
         Args:
             phase: Target processing phase
             event: Event instance to dispatch"""
-
+        self.event_queue[phase].append(event)
+        
     def dispatch(self, phase: Phase) -> None:
         """Process all queued events for the given phase.
         Events are sorted by descending priority and ascending timestamp.

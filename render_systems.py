@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from copy import copy
 from event_system import Event, EventBus, Phase
 from query_manager import World, QueryManager
-from system_manager import System, RenderSystem
+from system_manager import RenderSystem, Compositor
         
 
 class Scene:
@@ -347,7 +347,7 @@ class TextureManager:
 
         name = f'auto_{w}x{h}_{sym}'
         entity.render.name = name
-
+        
         if not name in self.textures:
             tex = Texture(name, [sym * w for _ in range(round(h))])
             self._register(tex)
@@ -360,38 +360,6 @@ class TextureManager:
         bbox = self.bbox_cache[entity.render.name]
         return (int(bbox[0] * zoom), int(bbox[1] * zoom))
 
-class Presenter(ABC):
-    @abstractmethod
-    def present(self, buffer: bytearray): pass
-
-class ConsolePresenter(Presenter):
-    def present(self, buffer):
-        sys.stdout.buffer.write(buffer)
-        sys.stdout.buffer.flush()
-
-class Compositor:
-    def __init__(self, resolution: tuple[int, int], presenter: Presenter, bg_sym: str = ' '):
-        self.presenter = presenter
-        self.w, self.h = resolution
-        self.bg_byte = ord(bg_sym)
-        self.stride = self.w + 1
-        self.size = self.stride * self.h
-        self.main_buffer = bytearray(self.size)
-        self._clear()
-
-    def _clear(self):
-        self.main_buffer[:] = bytes([self.bg_byte]) * self.size
-        for y in range(self.h):
-            self.main_buffer[y * self.stride + self.w] = 10 
-
-    def merge(self, buffer: bytearray, mask: list[bool]) -> None:
-        for i in range(self.size):
-            if mask[i]:
-                self.main_buffer[i] = buffer[i]
-
-    def present(self):
-        self.presenter.present(self.main_buffer)
-
 def render_sort(ents):
     return sorted(ents, key=lambda e: e.render.draw_priority)
 
@@ -400,8 +368,6 @@ class EntitiesRenderSystem(RenderSystem):
         super().__init__(Phase.RENDER, 1000, frozenset([Transform, Render]), compositor, transformer=render_sort)
         self.renderables = []
         self.visibles = []
-        
-        self.front = bytearray(self.size)
         self.clear()
 
         self.main_camera = None
@@ -486,9 +452,9 @@ class EntitiesRenderSystem(RenderSystem):
                 if sx < 0 or sx >= self.w: continue
                 if sym != r.transparent_sym:
                     self.put_sym(sx, sy, sym)
-                    self.update_mask[sy * self.stride + sx] = True
+                    self.update_mask[sy][sx] = True
                 else:
-                    self.update_mask[sy * self.stride + sx] = False
+                    self.update_mask[sy][sx] = False
     
     def render(self) -> bytearray:
         """Perform rendering pass: collect visibles, draw to back buffer, return reference to it."""
@@ -528,8 +494,6 @@ class EntitiesRenderSystem(RenderSystem):
 
             self.camera_dirty = False
             self.full_redraw = False
-        self.front[:] = self.buffer
-        print(self.bg_byte)
 
         return self.buffer
 
@@ -540,5 +504,4 @@ class EntitiesRenderSystem(RenderSystem):
     def update(self, _):
         self.render()
         self._compositor.merge(self.buffer, self.update_mask)
-
 

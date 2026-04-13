@@ -3,6 +3,7 @@ from entity import Entity
 from components import *
 from render_systems import Scene, SceneGroup
 import numpy as np
+from ui_system import UIText, UIScreen, UIButton
 
 game = Game(
     resolution = (100, 30),     # ширина × высота в символах
@@ -23,7 +24,7 @@ player = Entity().add_components(
     ),
     Collider(half_x=4, half_y=7, elasticity=0.7),
     Render(default_sym='A', draw_priority=10, is_visible=True),
-    Camera(offset=np.array([0., 0.], dtype=np.float32), zoom=1.0, active=True)
+    Camera(offset=np.array([0., 0.], dtype=np.float32), zoom=0.1, active=True)
 )
 
 # === Скрипт управления ===
@@ -66,5 +67,23 @@ game.scene_manager.load("level1", game)    # активирует, вызыва�
 
 main_scene.add(player)                     # добавляем в world + уведомляем query_manager
 game.set_player(player)                    # привязывает камеру к RenderSystem
+
+screen = UIScreen('main', (60, 20))
+game.ui_system.register_screen(screen)
+
+text = UIText('text', 3, 3, 10, 3, 'just a text')
+screen.add_child(text)
+
+def click1(_):
+    text.text = 'clicked!'
+
+button1 = UIButton('button', 3, 8, 12, 4, 'just a button', on_action=click1)
+screen.add_child(button1)
+
+def click2(_):
+    button1.text = '?'
+
+button2 = UIButton('another_button', 16, 8, 12, 4, 'click me', on_action=click2)
+screen.add_child(button2)
 
 game.run()

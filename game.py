@@ -4,10 +4,11 @@ from render_systems import *
 from physics_system import *
 from event_system import *
 from query_manager import QueryManager
-from system_manager import SystemManager
+from system_manager import *
 import keyboard
 import time
 from typing import Optional, Callable
+from ui_system import UISystem
 
 
 class Input:
@@ -129,10 +130,12 @@ class Game:
         self.collision_system = CollisionSystem(self.event_bus)
         self.render_system = EntitiesRenderSystem(self.compositor, self.scene_manager, bucket_step=bucket_step, textures_path=textures_path)
         self.physics_system = PhysicsSystem()
+        self.ui_system = UISystem(self.compositor, self)
 
         self.system_manager.register(self.physics_system, Phase.SIMULATION)
         self.system_manager.register(self.collision_system, Phase.REACTION)
         self.system_manager.register(self.render_system, Phase.RENDER)
+        self.system_manager.register(self.ui_system, Phase.RENDER)
 
     def set_player(self, entity: Entity):
         """Set given entity as the player-controlled character.
@@ -186,6 +189,7 @@ class Game:
 
             self.system_manager.update_phase(Phase.RENDER, dt)
             self.compositor.present()
+            self.compositor._clear()
 
             self._limit_fps(now)
 
