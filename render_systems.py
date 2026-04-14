@@ -34,6 +34,7 @@ class Scene:
         self.active = False
 
     def add(self, entity: Entity) -> Scene:
+        """Add entity to this scene."""
         if self._scene_manager is not None:
             self.world._add_entity(entity)
             self._scene_manager.query_manager.on_entity_action(entity)
@@ -51,6 +52,7 @@ class Scene:
         return self 
 
     def remove(self, entity_id: int) -> Optional[Entity]:
+        """Remove entity from scene by id."""
         removed = self.world._remove_entity(entity_id)
 
         if removed is None:
@@ -260,20 +262,49 @@ class SceneManager:
         self.stack_dirty = False
 
 class Texture:
-    """Immutable texture data container."""
+    """Texture data container."""
 
-    __slots__ = ('name', 'pixels', 'w', 'h', 'transparent_sym')
+    __slots__ = ('name', 'pixels', 'w', 'h', 'transparent_sym', 'default_color')
 
-    def __init__(self, name: str, pixels: list[str], transparent_sym: Optional[str] = None):
-        """Create a texture from a list of string rows."""
+    def __init__(self, name: str, pixels: list[str] | list[list[tuple[str, str]]], transparent_sym: Optional[str] = '`', default_color: str = Colors.RED):
         self.name = name
-        self.pixels = pixels
+        self.pixels = []
         self.h = len(pixels)
         self.w = len(pixels[0]) if pixels else 0
         self.transparent_sym = transparent_sym
+        self.default_color = default_color
 
-    def zoom(self, factor: float) -> list[str]:
-        """Return a nearest-neighbor scaled version of the texture.Does not mutate the original texture."""
+        if pixels:
+            if pixels[0] and type(pixels[0][0]) == tuple:
+                self.pixels = pixels
+            else:
+                self._parse_pixels(pixels)
+        
+    def _parse_pixels(self, pixels: list[str]) -> None:
+        print(pixels)
+        for row_str in pixels:
+            processed_row = []
+            i = 0
+            current_color = self.default_color
+            print(row_str)
+            row_str = row_str.replace('\\033', '\033').replace('\\x1b', '\x1b')
+
+            while i < len(row_str):
+                if row_str[i:i+2] == '\033[':
+                    end = row_str.find('m', i)
+                    if end != -1:
+                        current_color = row_str[i+2:end]
+                        i = end + 1
+                        continue
+
+                sym = row_str[i]
+                processed_row.append((sym[0], current_color))
+                i += 1
+
+            self.pixels.append(processed_row)
+
+    def zoom(self, factor: float) -> list[list[tuple[str, str]]]:
+        """Return a nearest-neighbor scaled version of the texture. Does not mutate the original texture."""
         if factor == 1.0:
             return self.pixels
 
@@ -287,14 +318,14 @@ class Texture:
 
         for y in range(new_h):
             src_y = int(y * sy)
-            row = self.pixels[src_y]
-            new_row = []
+            line = self.pixels[src_y]
+            new_line = []
 
             for x in range(new_w):
                 src_x = int(x * sx)
-                new_row.append(row[src_x])
+                new_line.append(line[src_x])
 
-            new_pixels.append(''.join(new_row))
+            new_pixels.append(new_line)
 
         return new_pixels
 
@@ -349,7 +380,7 @@ class TextureManager:
         entity.render.name = name
         
         if not name in self.textures:
-            tex = Texture(name, [sym * w for _ in range(round(h))])
+            tex = Texture(name, [sym * w for _ in range(h)])
             self._register(tex)
 
     def get_bbox(self, entity: Entity, zoom: int = 1) -> tuple[int, int]:
@@ -443,20 +474,19 @@ class EntitiesRenderSystem(RenderSystem):
         if t.dirty or self.camera_dirty:
             r.screen_x = round((t.pos[0] - cam_x) * self.main_camera.camera.zoom + (self.w - tex.w) / 2)
             r.screen_y = round((t.pos[1] - cam_y) * self.main_camera.camera.zoom + (self.h - tex.h) / 2)
-
         for y, row in enumerate(tex.pixels):
             sy = r.screen_y + y
             if sy < 0 or sy >= self.h: continue
             for x, sym in enumerate(row):
                 sx = r.screen_x + x
                 if sx < 0 or sx >= self.w: continue
-                if sym != r.transparent_sym:
-                    self.put_sym(sx, sy, sym)
+                if sym[0] != r.transparent_sym:
+                    self.put_sym(sx, sy, sym[0], color=sym[1])
                     self.update_mask[sy][sx] = True
                 else:
                     self.update_mask[sy][sx] = False
     
-    def render(self) -> bytearray:
+    def render(self) -> list[list[tuple[str, str]]]:
         """Perform rendering pass: collect visibles, draw to back buffer, return reference to it."""
         if self.main_camera is None:
             return self.front

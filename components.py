@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import numpy as np
 from typing import Callable, List
 from abc import ABC
+from colors import Colors
 
 
 @dataclass 
@@ -39,6 +40,7 @@ class Render(Component):
     draw_priority: int = 0
     name: str | None = None
     default_sym: str = '#'
+    default_color: str = Colors.WHITE
     transparent_sym: str = '\u8841'
     screen_x: int = 0
     screen_y: int = 0

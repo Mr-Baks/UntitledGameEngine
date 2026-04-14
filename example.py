@@ -23,8 +23,8 @@ player = Entity().add_components(
         velocity_limit=np.float32(15.0)
     ),
     Collider(half_x=4, half_y=7, elasticity=0.7),
-    Render(default_sym='A', draw_priority=10, is_visible=True),
-    Camera(offset=np.array([0., 0.], dtype=np.float32), zoom=0.1, active=True)
+    Render(default_sym='A', name='player', draw_priority=10, is_visible=True),
+    Camera(offset=np.array([0., 0.], dtype=np.float32), zoom=1, active=True)
 )
 
 # === Скрипт управления ===
@@ -81,7 +81,8 @@ button1 = UIButton('button', 3, 8, 12, 4, 'just a button', on_action=click1)
 screen.add_child(button1)
 
 def click2(_):
-    button1.text = '?'
+    button1.color = Colors.GREEN
+    button1.text = 'its green'
 
 button2 = UIButton('another_button', 16, 8, 12, 4, 'click me', on_action=click2)
 screen.add_child(button2)

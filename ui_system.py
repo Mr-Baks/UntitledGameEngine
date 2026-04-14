@@ -4,10 +4,18 @@ from typing import Callable, Optional
 from copy import deepcopy
 from system_manager import RenderSystem, Compositor
 from event_system import Phase
+from colors import Colors
 
+
+class Align(Enum):
+    LEFT = 0
+    CENTER = 1
+    RIGHT = 2
+    WIDTH = 3
 
 class UIElement(ABC):
-    def __init__(self, name: str, x: int, y: int, w: int, h: int, draw_priority: int = 0, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = True, background_sym: str = ' '):
+    """Base UI element class."""
+    def __init__(self, name: str, x: int, y: int, w: int, h: int, draw_priority: int = 0, color: str = Colors.WHITE, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = True, background_sym: str = ' '):
         self.name = name
         self.x, self.y = x, y
         self.w, self.h = w, h
@@ -17,6 +25,7 @@ class UIElement(ABC):
         self.transparent_sym = transparent_sym
         self.background_sym = background_sym
         self.fill_transparent = fill_transparent
+        self.color = color
         self.children: dict[str, UIElement] = {}
         self.parent = None
         self.texture = [[self.transparent_sym for _ in range(self.w)] for _ in range(self.h)]
@@ -25,12 +34,14 @@ class UIElement(ABC):
         self.own_dirty = True
 
     def _notify_dirty(self):
+        """Mark element and its parents as dirty for redraw."""
         self.dirty = True
         self.own_dirty = True
         if self.parent: 
             self.parent._notify_dirty()
 
     def add_child(self, child: UIElement) -> None:
+        """Add child element to this UI element's hierarchy."""
         if child.is_visible: self._notify_dirty()
         child.parent = self
         self.children[child.name] = child
@@ -40,6 +51,7 @@ class UIElement(ABC):
         self._notify_dirty()
 
     def remove_child(self, name: str) -> Optional[UIElement]:
+        """Removes child element from this UI element's hierarchy."""
         if name in self.children:
             removed = self.children.pop(name)
             removed.parent = None
@@ -50,6 +62,7 @@ class UIElement(ABC):
         return removed
 
     def get_texture(self) -> list[list[str]]: 
+        """Return fully composited texture of this element and all children."""
         if not self.dirty:
             return self.texture
         if self.own_dirty:
@@ -70,7 +83,7 @@ class UIElement(ABC):
                     px = child.x + cx
                     if 0 <= px < self.w and 0 <= py < self.h:
                         if child_tex[cy][cx] == child.transparent_sym:
-                            if child.fill_transparent: sym = child.background_sym
+                            if child.fill_transparent: sym = (child.background_sym, child.color)
                             else: continue
                         else: sym = child_tex[cy][cx]
                         self.texture[py][px] = sym
@@ -82,8 +95,10 @@ class UIElement(ABC):
     def rebuild(self): pass 
 
 class UIElementFocusable(UIElement):
-    def __init__(self, name: str, x: int, y: int, w: int, h: int, on_action: Optional[Callable] = None, on_focus: Optional[Callable] = None, on_blur: Optional[Callable] = None, draw_priority: int = 0, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = True, background_sym: str = ' '):
-        super().__init__(name, x, y, w, h, draw_priority=draw_priority, is_visible=is_visible, transparent_sym=transparent_sym, fill_transparent=fill_transparent, background_sym=background_sym)
+    """Base class for focusable UI elements with action and focus callbacks."""
+
+    def __init__(self, name: str, x: int, y: int, w: int, h: int, on_action: Optional[Callable] = None, on_focus: Optional[Callable] = None, on_blur: Optional[Callable] = None, draw_priority: int = 0, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = True, background_sym: str = ' ', color: str = Colors.WHITE):
+        super().__init__(name, x, y, w, h, draw_priority=draw_priority, is_visible=is_visible, transparent_sym=transparent_sym, fill_transparent=fill_transparent, background_sym=background_sym, color=color)
         self.on_action = on_action
         self.on_focus = on_focus
         self.on_blur = on_blur
@@ -91,7 +106,9 @@ class UIElementFocusable(UIElement):
         self.focusable = True
 
     @abstractmethod
-    def set_focus(self): pass
+    def set_focus(self): 
+        """Set focus state and trigger on_focus/on_blur callbacks."""
+        pass
 
     def handle_action(self, game: 'Game'):
         if self.on_action:
@@ -106,21 +123,19 @@ class UIElementFocusable(UIElement):
             self.on_blur(game)
 
 class UIScreen(UIElement):
+    """Root container for UI elements acting as a screen or layer."""
+
     def __init__(self, name: str, resolution: tuple[int, int]):
         super().__init__(name, 0, 0, *resolution, fill_transparent=False)
 
     def rebuild(self):
         self.own_texture = [[self.transparent_sym for _ in range(self.w)] for i in range(self.h)]
 
-class Align(Enum):
-    LEFT = 0
-    CENTER = 1
-    RIGHT = 2
-    WIDTH = 3
-
 class UIText(UIElement):
-    def __init__(self, name: str, x: int, y: int, w: int, h: int, text: str, align: Align = Align.LEFT, draw_priority: int = 0, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = False, background_sym: str = ' '):
-        super().__init__(name, x, y, w, h, draw_priority=draw_priority, is_visible=is_visible, transparent_sym=transparent_sym, fill_transparent=fill_transparent, background_sym=background_sym)
+    """Multi-line text element with alignment and word wrapping support."""
+
+    def __init__(self, name: str, x: int, y: int, w: int, h: int, text: str, align: Align = Align.LEFT, draw_priority: int = 0, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = False, background_sym: str = ' ', color: str = Colors.WHITE):
+        super().__init__(name, x, y, w, h, draw_priority=draw_priority, is_visible=is_visible, transparent_sym=transparent_sym, fill_transparent=fill_transparent, background_sym=background_sym, color=color)
         self._text = text
         self.text = text
         self.align = align
@@ -232,11 +247,13 @@ class UIText(UIElement):
             for x, char in enumerate(line):
                 if x >= self.w: 
                     break
-                self.own_texture[y][x] = char
+                self.own_texture[y][x] = (char, self.color)
         
 class UIButton(UIElementFocusable):
-    def __init__(self, name: str, x: int, y: int, w: int, h: int, text: str, padding: int = 1, on_action: Optional[Callable] = None, on_focus: Optional[Callable] = None, on_blur: Optional[Callable] = None, draw_priority: int = 0, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = True, background_sym: str = ' '):
-        super().__init__(name, x, y, w, h, draw_priority=draw_priority, is_visible=is_visible, on_action=on_action, on_blur=on_blur, on_focus=on_focus, transparent_sym=transparent_sym, fill_transparent=fill_transparent, background_sym=background_sym)
+    """Clickable button with focus visual states."""
+
+    def __init__(self, name: str, x: int, y: int, w: int, h: int, text: str, padding: int = 1, on_action: Optional[Callable] = None, on_focus: Optional[Callable] = None, on_blur: Optional[Callable] = None, draw_priority: int = 0, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = True, background_sym: str = ' ', color: str = Colors.WHITE):
+        super().__init__(name, x, y, w, h, draw_priority=draw_priority, is_visible=is_visible, on_action=on_action, on_blur=on_blur, on_focus=on_focus, transparent_sym=transparent_sym, fill_transparent=fill_transparent, background_sym=background_sym, color=color)
         self.padding = padding
 
         self.label = UIText(f"_{name}_label", padding, padding, w - 2 * padding, h - 2 * padding, text, align=Align.CENTER)
@@ -252,30 +269,30 @@ class UIButton(UIElementFocusable):
 
     def set_focus(self):
         if self.focused:
-            border_top    = "╔" + "═" * (self.w - 2) + "╗"
-            border_bottom = "╚" + "═" * (self.w - 2) + "╝"
-            border_side   = "║"
-            
-            self.own_texture[0] = list(border_top)
-            self.own_texture[-1] = list(border_bottom)
-            
+            border_top = [("╔", self.color), *([("═", self.color)] * (self.w - 2)), ("╗", self.color)]
+            border_bottom = [("╚", self.color), *([("═", self.color)] * (self.w - 2)), ("╝", self.color)]
+            border_side = ("║", self.color)
+
+            self.own_texture[0] = border_top
+            self.own_texture[-1] = border_bottom
+
             for y in range(1, self.h - 1):
                 self.own_texture[y][0] = border_side
                 self.own_texture[y][-1] = border_side
-                
+
             for y in range(1, self.h - 1):
                 for x in range(1, self.w - 1):
-                    if self.own_texture[y][x] == self.transparent_sym:
-                        self.own_texture[y][x] = ' '
-            
+                    if self.own_texture[y][x][0] == self.transparent_sym:
+                        self.own_texture[y][x] = (' ', self.color)
+
         else:
-            border_top    = "┌" + "─" * (self.w - 2) + "┐"
-            border_bottom = "└" + "─" * (self.w - 2) + "┘"
-            border_side   = "│"
-            
-            self.own_texture[0] = list(border_top)
-            self.own_texture[-1] = list(border_bottom)
-            
+            border_top    = [("┌", self.color), *([("─", self.color)] * (self.w - 2)), ("┐", self.color)]
+            border_bottom = [("└", self.color), *([("─", self.color)] * (self.w - 2)), ("┘", self.color)]
+            border_side   = ("│", self.color)
+
+            self.own_texture[0] = border_top
+            self.own_texture[-1] = border_bottom
+
             for y in range(1, self.h - 1):
                 self.own_texture[y][0] = border_side
                 self.own_texture[y][-1] = border_side
@@ -285,8 +302,10 @@ class UIButton(UIElementFocusable):
         self.set_focus()
         
 class UIProgressBar(UIElement):
-    def __init__(self, name: str, x: int, y: int, w: int, h: int, value: float = 0, on_update: Optional[Callable] = None, draw_priority: int = 0, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = True, background_sym: str = ' '):
-        super().__init__(name, x, y, w, h, draw_priority=draw_priority, is_visible=is_visible, focusable=False, transparent_sym=transparent_sym, fill_transparent=fill_transparent, background_sym=background_sym)
+    """Horizontal progress bar with dynamic filling."""
+
+    def __init__(self, name: str, x: int, y: int, w: int, h: int, value: float = 0, on_update: Optional[Callable] = None, draw_priority: int = 0, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = True, background_sym: str = ' ', color: str = Colors.WHITE):
+        super().__init__(name, x, y, w, h, draw_priority=draw_priority, is_visible=is_visible, focusable=False, transparent_sym=transparent_sym, fill_transparent=fill_transparent, background_sym=background_sym, color=color)
         self._value = max(0.0, min(1.0, value))
         self._filled_count = int(self.w * self._value) 
         self.filled_sym = '#'
@@ -317,9 +336,11 @@ class UIProgressBar(UIElement):
         
         for x in range(self._filled_count):
             for y in range(self.h):
-                self.own_texture[y][x] = self.filled_sym
+                self.own_texture[y][x] = (self.filled_sym, self.color)
 
 class UISystem(RenderSystem):
+    """Manages all UI screens, focus handling and input processing."""
+
     def __init__(self, compositor: Compositor, game: 'Game'):
         super().__init__(Phase.RENDER, 5000, frozenset(), compositor)
         self._compositor = compositor
@@ -333,6 +354,7 @@ class UISystem(RenderSystem):
         self.focusable_elements: list[UIElementFocusable] = [] 
 
     def register_screen(self, screen: UIScreen):
+        """Register UI screen and recursively register all its elements."""
         if screen.name in self.screens:
             return
         self.screens[screen.name] = screen
@@ -347,6 +369,7 @@ class UISystem(RenderSystem):
             self._register_element_recursive(child)
 
     def add_element(self, screen_name: str, element: UIElement, parent_name: Optional[str] = None):
+        """Add element to screen, optionally as child of another element."""
         screen = self.screens.get(screen_name)
         if not screen:
             return 
@@ -369,12 +392,12 @@ class UISystem(RenderSystem):
 
     def _collect_focusable(self, element: UIElement):
         if isinstance(element, UIElementFocusable) and element.focusable and element.is_visible:
-            print('z' * 300)
             self.focusable_elements.append(element)
         for child in element.children.values():
             self._collect_focusable(child)
 
     def set_focus(self, element: Optional[UIElementFocusable]):
+        """Set currently focused element and update visual states."""
         if self.focused == element:
             return
         if element.is_visible and element.focusable:
@@ -386,8 +409,8 @@ class UISystem(RenderSystem):
             element._notify_dirty()
             
     def change_focus(self, direction: int = 1):
+        """Move focus to next or previous focusable element."""
         if not self.focusable_elements:
-            print('No')
             return
         if not self.focused:
             self.set_focus(self.focusable_elements[0])
@@ -430,9 +453,9 @@ class UISystem(RenderSystem):
         tex = self.root_screen.get_texture()
         for y in range(min(self.root_screen.h, self.h)):
             for x in range(min(self.root_screen.w, self.w)):
-                char = tex[y][x]
-                if char != self.root_screen.transparent_sym:
-                    self.put_sym(x, y, char)
+                sym = tex[y][x]
+                if sym[0] != self.root_screen.transparent_sym:
+                    self.put_sym(x, y, *sym)
                     self.update_mask[y][x] = True
                 else:
                     self.update_mask[y][x] = False

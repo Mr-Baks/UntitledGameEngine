@@ -3,6 +3,7 @@ from components import Component
 from typing import Optional, Callable
 from query_manager import QueryManager
 from event_system import Phase
+from colors import Colors
 
 
 class System(ABC):
@@ -24,15 +25,15 @@ class RenderSystem(System):
         self._compositor = compositor
         self.w, self.h = compositor.w, compositor.h
         self.bg_sym = compositor.bg_sym
-        self.buffer = []
+        self.buffer: list[list[tuple[str, str]]] = [] # (sym, ANSI)
         self.clear()
         self.update_mask = [[False for _ in range(self.w)] for _ in range(self.h)]
 
-    def put_sym(self, x: int, y: int, sym: str) -> None:
+    def put_sym(self, x: int, y: int, sym: str, color: str = Colors.WHITE) -> None:
         """Put single symbol at screen coordinates (clipped)."""
         if not (0 <= y < self.h and 0 <= x < self.w):
             return
-        self.buffer[y][x] = sym
+        self.buffer[y][x] = (sym, color)
         self.buffer_dirty = True
 
     def get_sym(self, x: int, y: int) -> str:
@@ -41,35 +42,62 @@ class RenderSystem(System):
 
     def clear(self) -> None:
         """Fill back buffer with background symbol."""
-        self.buffer = [[self.bg_sym for _ in range(self.w)] for _ in range(self.h)]
+        self.buffer = [[(self.bg_sym, Colors.WHITE) for _ in range(self.w)] for _ in range(self.h)]
         
 class Presenter(ABC):
+    """Abstract presenter for outputting rendered frames."""
     @abstractmethod
-    def present(self, buffer: bytearray): pass
+    def present(self, buffer: list[str]): pass
 
 class ConsolePresenter(Presenter):
+    """Presenter that prints rendered buffer to console."""
     def present(self, buffer):
-        print('\n'.join([''.join(line) for line in buffer]) + '\n')
+        print('\n'.join(buffer) + '\n')
 
 class Compositor:
+    """Manages final composition of multiple render layers."""
     def __init__(self, resolution: tuple[int, int], presenter: Presenter, bg_sym: str = ' '):
         self.presenter = presenter
         self.w, self.h = resolution
         self.bg_sym = bg_sym
-        self.main_buffer: list[list[str]] = [[bg_sym for _ in range(self.w)] for _ in range(self.h)]
+        self.main_buffer: list[list[tuple[str, str]]] = [[bg_sym for _ in range(self.w)] for _ in range(self.h)]
         self._clear()
 
     def _clear(self):
-        self.main_buffer = [[self.bg_sym for _ in range(self.w)] for _ in range(self.h)]
+        self.main_buffer = [[(self.bg_sym, Colors.WHITE) for _ in range(self.w)] for _ in range(self.h)]
 
-    def merge(self, buffer: list[list[str]], mask: list[bool]) -> None:
+    def merge(self, buffer: list[list[tuple[str, str]]], mask: list[list[bool]]) -> None:
+        """Merge system's buffer with main buffer."""
         for y in range(self.h):
             for x in range(self.w):
                 if mask[y][x]:
                     self.main_buffer[y][x] = buffer[y][x]
 
+    def _flush(self) -> list[str]:
+        lines = []
+        for row in self.main_buffer:
+            current_line = []
+            last_color = None
+
+            for sym, color in row:
+                if color != last_color:
+                    if last_color is not None:
+                        current_line.append('\033[0m')
+                    current_line.append(f'\033[{color}m')
+                    last_color = color
+                current_line.append(sym)
+
+            if last_color is not None:
+                current_line.append('\033[0m')
+            print(current_line)
+            lines.append(''.join(current_line))
+        
+        return lines
+
     def present(self):
-        self.presenter.present(self.main_buffer)
+        """Presents main buffer."""
+        buffer = self._flush()
+        self.presenter.present(buffer)
 
 class SystemManager:
     """Manages registration, ordering and execution of all systems. Systems are grouped by phase and sorted by priority within each phase."""
