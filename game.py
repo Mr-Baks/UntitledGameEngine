@@ -113,7 +113,7 @@ class Game:
             textures_path: Path to JSON file containing named texture definitions.
         """
     
-    def __init__(self, resolution: tuple[int], fps: int, tickspeed: int, elasticity: float = 0.8, bucket_step: float = 0.25, background_sym: str = ' ', textures_path: str = 'textures.json', presenter: Presenter = ConsolePresenter()):
+    def __init__(self, resolution: tuple[int], fps: int, tickspeed: int, bucket_step: float = 0.25, background_sym: str = ' ', textures_path: str = 'textures.json', presenter: Presenter = ConsolePresenter()):
         self.fps = fps
         self.tickspeed = tickspeed
         self.tick = 0

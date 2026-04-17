@@ -266,7 +266,7 @@ class Texture:
 
     __slots__ = ('name', 'pixels', 'w', 'h', 'transparent_sym', 'default_color')
 
-    def __init__(self, name: str, pixels: list[str] | list[list[tuple[str, str]]], transparent_sym: Optional[str] = '`', default_color: str = Colors.RED):
+    def __init__(self, name: str, pixels: list[str] | list[list[tuple[str, str]]], transparent_sym: Optional[str] = '`', default_color: str = Colors.WHITE):
         self.name = name
         self.pixels = []
         self.h = len(pixels)
@@ -281,12 +281,10 @@ class Texture:
                 self._parse_pixels(pixels)
         
     def _parse_pixels(self, pixels: list[str]) -> None:
-        print(pixels)
         for row_str in pixels:
             processed_row = []
             i = 0
             current_color = self.default_color
-            print(row_str)
             row_str = row_str.replace('\\033', '\033').replace('\\x1b', '\x1b')
 
             while i < len(row_str):
@@ -380,7 +378,7 @@ class TextureManager:
         entity.render.name = name
         
         if not name in self.textures:
-            tex = Texture(name, [sym * w for _ in range(h)])
+            tex = Texture(name, [sym * w for _ in range(h)], default_color=entity.render.default_color)
             self._register(tex)
 
     def get_bbox(self, entity: Entity, zoom: int = 1) -> tuple[int, int]:
@@ -489,7 +487,7 @@ class EntitiesRenderSystem(RenderSystem):
     def render(self) -> list[list[tuple[str, str]]]:
         """Perform rendering pass: collect visibles, draw to back buffer, return reference to it."""
         if self.main_camera is None:
-            return self.front
+            return self.buffer
 
         self.renderables = self._query_manager.get_transformed(Transform, Render)
 

@@ -89,7 +89,6 @@ class Compositor:
 
             if last_color is not None:
                 current_line.append('\033[0m')
-            print(current_line)
             lines.append(''.join(current_line))
         
         return lines

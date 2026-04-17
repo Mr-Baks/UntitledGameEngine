@@ -239,7 +239,6 @@ class UIText(UIElement):
     def rebuild(self):
         self.own_texture = [[self.transparent_sym for _ in range(self.w)] for _ in range(self.h)]
         self.lines = self._wrap_text()
-        print(self.lines)
 
         for y, line in enumerate(self.lines):
             if y >= self.h: 
@@ -342,7 +341,7 @@ class UISystem(RenderSystem):
     """Manages all UI screens, focus handling and input processing."""
 
     def __init__(self, compositor: Compositor, game: 'Game'):
-        super().__init__(Phase.RENDER, 5000, frozenset(), compositor)
+        super().__init__(Phase.RENDER, 1000, frozenset(), compositor)
         self._compositor = compositor
         self._game = game
         
@@ -443,6 +442,7 @@ class UISystem(RenderSystem):
             self.change_focus(-1)
 
     def update(self, _):
+        if self.root_screen is None: return
         self.clear()
         if self.root_screen.dirty:
             self._collect_focusable(self.root_screen)

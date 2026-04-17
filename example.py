@@ -1,13 +1,13 @@
-from game import Game
+from game import Game, Phase
 from entity import Entity
 from components import *
 from render_systems import Scene, SceneGroup
 import numpy as np
-from ui_system import UIText, UIScreen, UIButton
+from ui_system import UIText, UIScreen, UIButton, Align
 
 game = Game(
     resolution = (100, 30),     # ширина × высота в символах
-    fps        = 1,
+    fps        = 15,
     tickspeed  = 120,           # частота физики (обычно выше fps)
     background_sym = '.',
     textures_path = 'textures.json'
@@ -22,7 +22,7 @@ player = Entity().add_components(
         acceleration=np.zeros(2, dtype=np.float32),
         velocity_limit=np.float32(15.0)
     ),
-    Collider(half_x=4, half_y=7, elasticity=0.7),
+    Collider(half_x=5.5, half_y=1.5, elasticity=2),
     Render(default_sym='A', name='player', draw_priority=10, is_visible=True),
     Camera(offset=np.array([0., 0.], dtype=np.float32), zoom=1, active=True)
 )
@@ -68,14 +68,34 @@ game.scene_manager.load("level1", game)    # активирует, вызыва�
 main_scene.add(player)                     # добавляем в world + уведомляем query_manager
 game.set_player(player)                    # привязывает камеру к RenderSystem
 
+import random
+npa = lambda *args: np.array(args, dtype=np.float32)
+clrs = [Colors.BLUE, Colors.CYAN, Colors.MAGENTA]
+syms = '@#$'
+
+for i in range(300):
+    e = Entity().add_components(Transform(npa(i / 5, 0)), Collider(2, 2), Render(default_color=random.choice(clrs), default_sym=random.choice(syms)), Physics(np.float32(10), npa(random.randint(-2, 2), 0), npa(0, 0)))
+    main_scene.add(e)
+
 screen = UIScreen('main', (60, 20))
 game.ui_system.register_screen(screen)
 
 text = UIText('text', 3, 3, 10, 3, 'just a text')
 screen.add_child(text)
 
-def click1(_):
+text_pos = UIText('your_pos', 13, 3, 15, 4, 'You are here: ...', align=Align.WIDTH)
+screen.add_child(text_pos)
+
+def get_pos(entity: Entity, _):
+    text_pos.text = 'You are here:\n' + ' '.join([str(entity.transform.pos[0]), str(entity.transform.pos[1])])
+
+player.script.add_frame(get_pos)
+
+def click1(game: Game):
     text.text = 'clicked!'
+    game.compositor.bg_sym = ' '
+    for s in game.system_manager.systems[Phase.RENDER]:
+        s.bg_sym = ' '
 
 button1 = UIButton('button', 3, 8, 12, 4, 'just a button', on_action=click1)
 screen.add_child(button1)
