@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 from typing import Callable, List
 from abc import ABC
@@ -18,10 +18,10 @@ class Transform(Component):
 @dataclass
 class Physics(Component):
     """Physical properties and motion state of an entity."""
-    mass: np.float32
-    velocity: np.ndarray  
-    acceleration: np.ndarray  
-    velocity_limit: np.float32 = np.float32(100)
+    mass: np.float32 = np.float32(1.0)
+    velocity: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=np.float32))
+    acceleration: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=np.float32))
+    velocity_limit: np.float32 = np.float32(100.0)
     is_static: bool = False
 
 @dataclass
@@ -48,10 +48,9 @@ class Render(Component):
 @dataclass
 class Camera(Component):
     """Camera properties attached to an entity."""
-    offset: np.ndarray  
+    offset: np.ndarray = field(default_factory=np.zeros(2, dtype=np.float32))
     zoom: float = 1.0
     active: bool = True
-    mode: str = 'world'  # 'world' | 'screen'
 
 class Script:
     """Container for custom per-entity update callbacks."""

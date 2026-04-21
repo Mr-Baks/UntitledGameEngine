@@ -10,7 +10,7 @@ from event_system import Event, EventBus, Phase
 from query_manager import World, QueryManager
 from system_manager import RenderSystem, Compositor
         
-
+rmvd = False
 class Scene:
     """Single scene containing its own isolated world and lifecycle hooks."""
 
@@ -23,7 +23,7 @@ class Scene:
         self.entities: dict[str, Entity] = {}
 
         self._scene_manager: Optional[SceneManager] = None
-        self._pending_entities: List[Entity] = []
+        self._pending_entities: set[Entity] = []
 
         self.on_load = []
         self.on_unload = []
@@ -38,10 +38,9 @@ class Scene:
         if self._scene_manager is not None:
             self.world._add_entity(entity)
             self._scene_manager.query_manager.on_entity_action(entity)
-            self._scene_manager.active_worlds.append(self.world)
             self._scene_manager.scenes[self.name] = self
         else:
-            self._pending_entities.append(entity)
+            self._pending_entities.add(entity)
 
         if entity.name is not None: 
             if entity.name in self.entities:
@@ -51,21 +50,33 @@ class Scene:
         
         return self 
 
-    def remove(self, entity_id: int) -> Optional[Entity]:
-        """Remove entity from scene by id."""
-        removed = self.world._remove_entity(entity_id)
-
+    def remove(self, entity: Optional[Entity] = None, entity_id: int = None, entity_name: str = None) -> Optional[Entity]:
+        """Remove entity from scene by id or name."""
+        if entity is not None:
+            eid = entity.id
+        elif entity_id is not None:
+            eid = entity_id
+        elif entity_name is not None and entity_name in self.entities:
+            eid = self.entities[entity_name].id
+        else:
+            return None
+        global rmvd
+        removed = self.world._remove_entity(eid)
+        
+        print(rmvd)
         if removed is None:
-            for e in self._pending_entities:
-                if e.id == entity_id:
+            for e in self._pending_entities[:]:
+                if e.id == eid:
                     self._pending_entities.remove(e)
                     removed = e
-        else: 
-            self._scene_manager.scenes.pop(self.name)
-            self._scene_manager.active_worlds.remove(self.world)
-            self._scene_manager.query_manager.on_entity_action(entity)
+                    break
 
-        if removed is not None: self.entities.pop(removed.name)
+        if removed is not None:
+            if removed.name and removed.name in self.entities:
+                self.entities.pop(removed.name)
+
+            if self._scene_manager and self._scene_manager.query_manager:
+                self._scene_manager.query_manager.on_entity_action(removed)
 
         return removed
 
@@ -93,12 +104,13 @@ class Scene:
         return self.entities.get(name)
 
     def _flush_pending(self) -> None:
+        self._scene_manager.active_worlds.append(self.world)
+
         if not self._pending_entities:
             return
 
         for entity in self._pending_entities:
-            self.world._add_entity(entity)
-            self._scene_manager.query_manager.on_entity_action(entity)
+            self.add(entity)
 
         self._pending_entities.clear()
         
@@ -216,7 +228,7 @@ class SceneManager:
 
         self.stack_dirty = True
 
-        for scene.world in self.active_worlds:
+        for scene in self.scenes.values():
             scene._flush_pending()
         
         self.query_manager.clear()
@@ -332,7 +344,7 @@ class TextureManager:
 
     def __init__(self, bucket_step: float = 0.25):
         """Initialize texture storage and zoom bucket cache."""
-        self.textures: dict[str, Texture] = {}
+        self.textures: dict[str, Texure] = {}
         self.zoom_cache = {}
         self.bbox_cache: dict[str, tuple[int, int]] = {}
         self.bucket_step = 1 / bucket_step
@@ -479,6 +491,8 @@ class EntitiesRenderSystem(RenderSystem):
                 sx = r.screen_x + x
                 if sx < 0 or sx >= self.w: continue
                 if sym[0] != r.transparent_sym:
+                    if entity.id == 10:
+                        print(10, 3)
                     self.put_sym(sx, sy, sym[0], color=sym[1])
                     self.update_mask[sy][sx] = True
                 else:
@@ -488,7 +502,7 @@ class EntitiesRenderSystem(RenderSystem):
         """Perform rendering pass: collect visibles, draw to back buffer, return reference to it."""
         if self.main_camera is None:
             return self.buffer
-
+        self._query_manager.invalidate()
         self.renderables = self._query_manager.get_transformed(Transform, Render)
 
         cam_pos = self.main_camera.camera.offset + self.main_camera.transform.pos

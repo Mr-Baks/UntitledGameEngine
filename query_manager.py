@@ -188,24 +188,28 @@ class QueryManager:
             for k in list(self.transformed_cache.keys()):
                 if component_type in k:
                     self.transformed_dirty[k] = True
-
+    
         if component_type is None:
-            for sn, scene_dirty in self.scene_dirty:
-                scene_dirty[sn] = {k: True for k in scene_dirty}
+            for scene_name, dirty_dict in self.scene_dirty.items():
+                for key in list(dirty_dict.keys()):
+                    dirty_dict[key] = True
         else:
             if scene_name and scene_name in self.scene_dirty:
-                for k in list(self.scene_dirty[scene_name].keys()):
-                    if component_type in k:
-                        self.scene_dirty[scene_name][k] = True
+                dirty_dict = self.scene_dirty[scene_name]
+                for key in list(dirty_dict.keys()):
+                    if component_type in key:
+                        dirty_dict[key] = True
             else:
-                for scene_dirty in self.scene_dirty.values():
-                    for k in list(scene_dirty.keys()):
-                        if component_type in k:
-                            scene_dirty[k] = True
+                for dirty_dict in self.scene_dirty.values():
+                    for key in list(dirty_dict.keys()):
+                        if component_type in key:
+                            dirty_dict[key] = True
 
     def on_entity_action(self, entity: Entity) -> None:
         for c in entity.components:
+            print(entity)
             self.invalidate(component_type=c)
+        self.transformed_dirty = {k: True for k in self.transformed_cache}
 
     def clear(self) -> None:
         self.global_cache.clear()

@@ -304,7 +304,7 @@ class UIProgressBar(UIElement):
     """Horizontal progress bar with dynamic filling."""
 
     def __init__(self, name: str, x: int, y: int, w: int, h: int, value: float = 0, on_update: Optional[Callable] = None, draw_priority: int = 0, is_visible: bool = True, transparent_sym: str = '`', fill_transparent: bool = True, background_sym: str = ' ', color: str = Colors.WHITE):
-        super().__init__(name, x, y, w, h, draw_priority=draw_priority, is_visible=is_visible, focusable=False, transparent_sym=transparent_sym, fill_transparent=fill_transparent, background_sym=background_sym, color=color)
+        super().__init__(name, x, y, w, h, draw_priority=draw_priority, is_visible=is_visible, transparent_sym=transparent_sym, fill_transparent=fill_transparent, background_sym=background_sym, color=color)
         self._value = max(0.0, min(1.0, value))
         self._filled_count = int(self.w * self._value) 
         self.filled_sym = '#'

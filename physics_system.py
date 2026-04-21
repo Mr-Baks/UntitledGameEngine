@@ -38,6 +38,8 @@ class CollisionSystem(System):
         t1, p1, c1 = e1.transform, e1.physics, e1.collider
         t2, p2, c2 = e2.transform, e2.physics, e2.collider
 
+        if p1 is None or p2 is None: return
+
         dx = t2.pos[0] - t1.pos[0]
         dy = t2.pos[1] - t1.pos[1]
         ox = c1.half_x + c2.half_x - abs(dx)
