@@ -21,13 +21,13 @@ def main():
     game.input.bind_key('left')
     game.input.bind_key('right')
 
-    demo_group = SceneGroup("demo_platformer")
-    level = Scene("level1", priority=0)
+    demo_group = SceneGroup('demo_platformer')
+    level = Scene('level1', priority=0)
     demo_group.add(level)
     game.scene_manager.register(demo_group)
 
     global player
-    player = Entity("player")
+    player = Entity('player')
     player.add_components(
         Transform(pos=np.array([12.0, 20.0], dtype=np.float32)),
         Physics(
@@ -37,7 +37,7 @@ def main():
             velocity_limit=65.0
         ),
         Collider(half_x=0.75, half_y=1.1, elasticity=0),
-        Render(draw_priority=100, default_color=Colors.CYAN),
+        Render(name='player', draw_priority=100, default_color=Colors.CYAN),
         Camera(offset=np.array([0.0, -2.0], dtype=np.float32), zoom=1),
         Script()
     )
@@ -82,18 +82,18 @@ def main():
             Transform(pos=np.array([x, y], dtype=np.float32)),
             Physics(is_static=True),
             Collider(half_x=half_x, half_y=half_y),
-            Render(default_sym='═', default_color=Colors.WHITE, draw_priority=0)
+            Render(default_sym='═', default_color=Colors.GRAY, draw_priority=0)
         )
         level.add(plat)
 
-    add_platform("ground", 45.0, 34.0, 48.0)
-    add_platform("plat1", 18.0, 26.0, 7.0)
-    add_platform("plat2", 38.0, 21.0, 6.0)
-    add_platform("plat3", 65.0, 18.0, 9.0)
-    add_platform("plat4", 85.0, 27.0, 5.0)
-    add_platform("high", 55.0, 12.0, 4.0)
+    add_platform('ground', 45.0, 34.0, 48.0)
+    add_platform('plat1', 18.0, 26.0, 7.0)
+    add_platform('plat2', 38.0, 21.0, 6.0)
+    add_platform('plat3', 65.0, 18.0, 9.0)
+    add_platform('plat4', 85.0, 27.0, 5.0)
+    add_platform('high', 55.0, 12.0, 4.0)
 
-    enemy = Entity("enemy")
+    enemy = Entity('enemy')
     enemy.add_components(
         Transform(pos=np.array([65.0, 16.0], dtype=np.float32)),
         Physics(
@@ -124,7 +124,7 @@ def main():
     coins = []
 
     def create_coin(x: float, y: float):
-        coin = Entity(f"coin_{x:.1f}")
+        coin = Entity(f'coin_{x:.1f}')
         coin.add_components(
             Transform(pos=np.array([x, y], dtype=np.float32)),
             Collider(half_x=0.4, half_y=0.4),
@@ -152,37 +152,33 @@ def main():
 
     game.set_player(player)
 
-    ui_screen = UIScreen("hud", (100, 40))
+    ui_screen = UIScreen('hud', (100, 40))
     game.ui_system.register_screen(ui_screen)
 
-    score_text = UIText(name="score", x=60, y=1, w=35, h=1, text="Score: 0000", align=Align.LEFT)
+    score_text = UIText(name='score', x=60, y=2, w=35, h=1, text='Score: 0000', align=Align.LEFT)
 
     def quit_action(g: Game):
         g.is_running = False
-        print("\033[?25h")
 
-    quit_btn = UIButton(name="quit_btn", x=86, y=1, w=12, h=3, text="QUIT", color=Colors.RED, on_action=quit_action)
+    quit_btn = UIButton(name='quit_btn', x=86, y=1, w=12, h=3, text='QUIT', color=Colors.RED, on_action=quit_action)
 
     ui_screen.add_child(score_text)
     ui_screen.add_child(quit_btn)
 
     game.score = 0
 
-    updater = Entity("ui_updater")
+    updater = Entity('ui_updater')
     updater.add_component(Script())
 
     def ui_frame(_, g: Game):
-        for e in g.query_manager.get_global(Transform):
-            if 'coin' in e.name: print('COIN')
-            if e.id == 10: print('!!!')
-        score_text.text = f"Score: {g.score:04d}"
+        score_text.text = f'Score: {g.score:04d}'
 
     updater.script.add_frame(ui_frame)
     level.add(updater)
 
-    game.scene_manager.load("demo_platformer", game)
+    game.scene_manager.load('demo_platformer', game)
     game.run()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

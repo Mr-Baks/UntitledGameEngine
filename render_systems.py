@@ -63,7 +63,6 @@ class Scene:
         global rmvd
         removed = self.world._remove_entity(eid)
         
-        print(rmvd)
         if removed is None:
             for e in self._pending_entities[:]:
                 if e.id == eid:
@@ -491,8 +490,6 @@ class EntitiesRenderSystem(RenderSystem):
                 sx = r.screen_x + x
                 if sx < 0 or sx >= self.w: continue
                 if sym[0] != r.transparent_sym:
-                    if entity.id == 10:
-                        print(10, 3)
                     self.put_sym(sx, sy, sym[0], color=sym[1])
                     self.update_mask[sy][sx] = True
                 else:

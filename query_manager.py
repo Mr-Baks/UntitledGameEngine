@@ -207,7 +207,6 @@ class QueryManager:
 
     def on_entity_action(self, entity: Entity) -> None:
         for c in entity.components:
-            print(entity)
             self.invalidate(component_type=c)
         self.transformed_dirty = {k: True for k in self.transformed_cache}
 

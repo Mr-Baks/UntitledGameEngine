@@ -33,7 +33,7 @@ class Entity:
             self.add_component(c)
         return self
 
-    def get_component[T](self, component_type: Type[T]) -> Optional[T]:
+    def get_component(self, component_type: Type) -> Optional:
         """Get component by type or None."""
         return self.components_dict.get(component_type)
 
