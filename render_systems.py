@@ -9,6 +9,7 @@ from copy import copy
 from event_system import Event, EventBus, Phase
 from query_manager import World, QueryManager
 from system_manager import RenderSystem, Compositor
+from colors import Colors
         
 rmvd = False
 class Scene:
@@ -23,7 +24,7 @@ class Scene:
         self.entities: dict[str, Entity] = {}
 
         self._scene_manager: Optional[SceneManager] = None
-        self._pending_entities: set[Entity] = []
+        self._pending_entities: set[Entity] = set()
 
         self.on_load = []
         self.on_unload = []
@@ -64,7 +65,7 @@ class Scene:
         removed = self.world._remove_entity(eid)
         
         if removed is None:
-            for e in self._pending_entities[:]:
+            for e in list(self._pending_entities):
                 if e.id == eid:
                     self._pending_entities.remove(e)
                     removed = e
@@ -343,7 +344,7 @@ class TextureManager:
 
     def __init__(self, bucket_step: float = 0.25):
         """Initialize texture storage and zoom bucket cache."""
-        self.textures: dict[str, Texure] = {}
+        self.textures: dict[str, Texture] = {}
         self.zoom_cache = {}
         self.bbox_cache: dict[str, tuple[int, int]] = {}
         self.bucket_step = 1 / bucket_step
@@ -536,9 +537,13 @@ class EntitiesRenderSystem(RenderSystem):
 
         return self.buffer
 
-    def compose(self) -> str:
-        """Convert current back buffer to printable string (for console output)."""
-        return self.buffer.decode('ascii', errors='ignore')
+    def compose(self) -> list[str]:
+        """Convert current back buffer to printable string lines (for console output)."""
+        lines = []
+        for row in self.buffer:
+            line = ''.join(sym for sym, _ in row)
+            lines.append(line)
+        return lines
 
     def update(self, _):
         self.render()

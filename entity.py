@@ -20,20 +20,20 @@ class Entity:
         self.components: Set[Type] = set()
         self.components_dict: Dict[Type, Any] = {}
 
-    def add_component(self, component: Any) -> 'Entity':
+    def add_component(self, component: Any) -> Entity:
         """Add one component (fluent)."""
         comp_type = type(component)
         self.components.add(comp_type)
         self.components_dict[comp_type] = component
         return self
 
-    def add_components(self, *components: Any) -> 'Entity':
+    def add_components(self, *components: Any) -> Entity:
         """Add multiple components at once (fluent)."""
         for c in components:
             self.add_component(c)
         return self
 
-    def get_component(self, component_type: Type) -> Optional:
+    def get_component(self, component_type: Type) -> Optional[Entity]:
         """Get component by type or None."""
         return self.components_dict.get(component_type)
 

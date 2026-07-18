@@ -7,7 +7,7 @@ from query_manager import QueryManager
 from system_manager import *
 import keyboard
 import time
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict
 from ui_system import UISystem
 
 
@@ -192,9 +192,6 @@ class Game:
             self.compositor._clear()
 
             self._limit_fps(now)
-
-            for phase in Phase:
-                event_bus.dispatch(phase)
 
     def _limit_fps(self, current_time):
         """Sleep if necessary to maintain target frame rate."""

@@ -16,12 +16,8 @@ class CollisionEvent(Event):
 class CollisionSystem(System):
     """Performs broad-phase (spatial grid) + narrow-phase (AABB) collision detection and resolution."""
 
-    phase = Phase.REACTION
-    priority = 1000 
-    required_components = frozenset([Transform, Collider])
-    transformer = None
-
     def __init__(self, event_bus: EventBus):
+        super().__init__(Phase.REACTION, 1000, frozenset([Transform, Collider]), None)
         self.event_bus = event_bus
         self._query_manager: QueryManager = None
 
@@ -118,12 +114,8 @@ class CollisionSystem(System):
                         resolve_count += 1
 
 class PhysicsSystem(System):
-    phase = Phase.SIMULATION 
-    priority = 1000
-    required_components = frozenset([Transform, Physics])
-    transformer = None
-
     def __init__(self, y_scale: float = 0.5):
+        super().__init__(Phase.SIMULATION, 1000, frozenset([Transform, Physics]), None)
         self.y_scale_vec = np.array((1, y_scale), dtype=np.float32)
         self._query_manager: QueryManager = None
 

@@ -121,13 +121,13 @@ class SystemManager:
 
     def update_all(self, dt: int) -> None:
         """Run all phases in order (0 → phases_count-1)."""
-        for p in range(4):
+        for p in range(self.phases_count):
             self.update_phase(p, dt)
 
     def remove(self, system_type: type[System], phase: int) -> list[System]:
         """Remove all instances of the given system type in the phase."""
         removed = []
-        systems =  self.systems[p]
+        systems =  self.systems[phase]
 
         for s in systems:
             if isinstance(s, system_type):
